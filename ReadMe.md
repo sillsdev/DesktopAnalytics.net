@@ -1,7 +1,7 @@
 DesktopAnalytics.net
 ===============================
 
-SegmentIO provides a nice <i>server-oriented</i> library in [Analytics.net](https://github.com/segmentio/Analytics.NET). This project is just one little class that wraps that to provide some standard behavior needed by <i>desktop</i> applications:
+[Segment.IO](http://segment.io) provides a nice <i>server-oriented</i> library in [Analytics.net](https://github.com/segmentio/Analytics.NET). This project is just one little class that wraps that to provide some standard behavior needed by <i>desktop</i> applications:
 
 + Supplies guids for user ids, saves that in a Settings file
 + Set $Browser to the Operating System Version (e.g. "Windows 8").
@@ -13,7 +13,7 @@ SegmentIO provides a nice <i>server-oriented</i> library in [Analytics.net](http
 
 ###Adding to your project
 
-1) Follow the instructions at [segmentio](https://segment.io/libraries/.net) to add the Analytics package.
+1) Follow the instructions at [Segment.io](https://segment.io/libraries/.net) to add the Analytics package.
 
 2) Clone and build this project, or download from TODO
 
@@ -25,14 +25,18 @@ SegmentIO provides a nice <i>server-oriented</i> library in [Analytics.net](http
 
 ###Tracking
 
-    Analytics.RecordEvent("Create New Image");
+    Analytics.Track("Create New Image");
 
 or
 
-    Analytics.RecordEvent("Save PDF", new Dictionary<string, string>() {
+    Analytics.Track("Save PDF", new Dictionary<string, string>() {
 			{"PageCount",  pageCount}, 
 			{"Layout", "A4Landscape"}
         });
+
+###Error Reporting
+
+    Analytics.ReportException(error);
 
 ##Requirements
 

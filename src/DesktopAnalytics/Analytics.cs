@@ -97,7 +97,7 @@ namespace DesktopAnalytics
 		/// </summary>
 		///	Analytics.RecordEvent("Save PDF");
 		/// <param name="eventName"></param>
-		public static void RecordEvent(string eventName)
+		public static void Track(string eventName)
 		{
 			if (!AnalyticsSettings.Default.AllowTracking)
 				return;
@@ -117,7 +117,7 @@ namespace DesktopAnalytics
 		///	</example>
 		/// <param name="eventName"></param>
 		/// <param name="properties"></param>
-		public static void RecordEvent(string eventName, Dictionary<string, string> properties)
+		public static void Track(string eventName, Dictionary<string, string> properties)
 		{
 			if (!AnalyticsSettings.Default.AllowTracking)
 				return;
@@ -129,7 +129,7 @@ namespace DesktopAnalytics
 		/// Sends the exception's message and stacktrace
 		/// </summary>
 		/// <param name="e"></param>
-		public static void ReportError(Exception e)
+		public static void ReportException(Exception e)
 		{
 			if (!AnalyticsSettings.Default.AllowTracking)
 				return;
