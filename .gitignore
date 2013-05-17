@@ -1,0 +1,11 @@
+*.suo
+*.exe
+*.dll
+*.obj
+*.pdb
+bin/
+obj/
+_ReSharper*/
+*.ncrunchsolution
+packages/
+output/
