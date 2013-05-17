@@ -38,9 +38,9 @@ or
 
     Analytics.ReportException(error);
 
-##Requirements
+##Dependencies
 
-Currently built for .net 4 client profile
+The project is currently built for .net 4 client profile. If you get the solution, nuget should auto-restore the two dependencies when you build; they are not part of the source tree.
 
 ##License
 
