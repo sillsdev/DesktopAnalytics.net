@@ -9,6 +9,9 @@ DesktopAnalytics.net
  + First launch ("Create" to fit MixPanel's expectation)
  + Version Upgrade
 
+##Install
+    PM> Install-Package DesktopAnalytics
+ 
 ##Usage
 
 ###Adding to your project
