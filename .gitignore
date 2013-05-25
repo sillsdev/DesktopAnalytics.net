@@ -10,3 +10,4 @@ _ReSharper*/
 packages/
 output/
 *.user
+/*.nupkg
