@@ -16,5 +16,9 @@
         <dependencies>
             <dependency id="Analytics" version="1.1.0" />
         </dependencies>
+      <files>
+        <file src="DesktopAnalytics.dll" target="lib" />
+        <file src="DesktopAnalytics.xml" target="lib" />
+      </files>
     </metadata>
 </package>
