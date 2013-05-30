@@ -60,7 +60,7 @@ namespace DesktopAnalytics
 					//{ "Email", "joshmo@example.com" },
 				});
 
-			var applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
+			_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
@@ -68,15 +68,15 @@ namespace DesktopAnalytics
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
 				Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Created", new Properties()
 					{
-						{"Version", applicationVersion},
+						{"Version", _applicationVersion},
 					});
 			}
-			else if (AnalyticsSettings.Default.LastVersionLaunched != applicationVersion)
+			else if (AnalyticsSettings.Default.LastVersionLaunched != _applicationVersion)
 			{
 				Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Upgrade", new Properties()
 					{
 						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
-						{"Version", applicationVersion},
+						{"Version", _applicationVersion},
 					});
 			}
 			
@@ -84,10 +84,10 @@ namespace DesktopAnalytics
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Launch", new Properties()
 					{
-						{"Version", applicationVersion},
+						{"Version", _applicationVersion},
 					});
 			
-			AnalyticsSettings.Default.LastVersionLaunched = applicationVersion;
+			AnalyticsSettings.Default.LastVersionLaunched = _applicationVersion;
 			AnalyticsSettings.Default.Save();
 
 		}
@@ -134,9 +134,10 @@ namespace DesktopAnalytics
 			if (!AnalyticsSettings.Default.AllowTracking)
 				return;
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties() {
-				{ "Message", e.Message },
-				{ "Stack Trace", e.StackTrace }
+			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties() 
+					{ "Message", e.Message },
+					{ "Stack Trace", e.StackTrace },
+					{ "Version", _applicationVersion}
 				});
 		}
 
