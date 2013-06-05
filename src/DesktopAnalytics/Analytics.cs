@@ -23,6 +23,8 @@ namespace DesktopAnalytics
 	/// </example>
 	public class Analytics : IDisposable
 	{
+		private static string _applicationVersion;
+
 		public Analytics(string apiSecret)
 		{
 			AnalyticsSettings.Default.AllowTracking = true;
@@ -134,11 +136,12 @@ namespace DesktopAnalytics
 			if (!AnalyticsSettings.Default.AllowTracking)
 				return;
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties() 
+			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties()
+			{
 					{ "Message", e.Message },
 					{ "Stack Trace", e.StackTrace },
 					{ "Version", _applicationVersion}
-				});
+			});
 		}
 
 		private static Properties MakeSegmentIOProperties(Dictionary<string, string> properties)
