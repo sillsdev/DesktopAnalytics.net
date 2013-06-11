@@ -26,6 +26,10 @@ DesktopAnalytics.net
 		//run your app UI
 	}
 
+If you have a way of letting users disable tracking, pass that value as the second argument:
+
+    using (new Analytics("mySegmentIOSecret", allowTracking))
+
 ###Tracking
 
     Analytics.Track("Create New Image");

@@ -1,5 +1,5 @@
 ﻿<?xml version='1.0' encoding='utf-8'?>
-<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="DeskAnalyticsSharp" GeneratedClassName="AnalyticsSettings">
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="DesktopAnalytics" GeneratedClassName="AnalyticsSettings">
   <Profiles />
   <Settings>
     <Setting Name="IdForAnalytics" Type="System.String" Scope="User">
@@ -19,9 +19,6 @@
     </Setting>
     <Setting Name="Email" Type="System.String" Scope="User">
       <Value Profile="(Default)" />
-    </Setting>
-    <Setting Name="AllowTracking" Type="System.Boolean" Scope="User">
-      <Value Profile="(Default)">True</Value>
     </Setting>
   </Settings>
 </SettingsFile>

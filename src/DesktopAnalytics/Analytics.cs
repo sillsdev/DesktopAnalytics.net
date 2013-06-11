@@ -25,11 +25,11 @@ namespace DesktopAnalytics
 	{
 		private static string _applicationVersion;
 
-		public Analytics(string apiSecret)
+		public Analytics(string apiSecret, bool allowTracking=true)
 		{
-			AnalyticsSettings.Default.AllowTracking = true;
-			
-			if (!AnalyticsSettings.Default.AllowTracking)
+			AllowTracking = allowTracking;
+
+			if (!AllowTracking)
 				return;
 
 			//bring in settings from any previous version
@@ -101,7 +101,7 @@ namespace DesktopAnalytics
 		/// <param name="eventName"></param>
 		public static void Track(string eventName)
 		{
-			if (!AnalyticsSettings.Default.AllowTracking)
+			if (!AllowTracking)
 				return;
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName);
@@ -121,7 +121,7 @@ namespace DesktopAnalytics
 		/// <param name="properties"></param>
 		public static void Track(string eventName, Dictionary<string, string> properties)
 		{
-			if (!AnalyticsSettings.Default.AllowTracking)
+			if (!AllowTracking)
 				return;
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
@@ -133,7 +133,7 @@ namespace DesktopAnalytics
 		/// <param name="e"></param>
 		public static void ReportException(Exception e)
 		{
-			if (!AnalyticsSettings.Default.AllowTracking)
+			if (!AllowTracking)
 				return;
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties()
@@ -170,6 +170,11 @@ namespace DesktopAnalytics
 			if(Segmentio.Analytics.Client !=null)
 				Segmentio.Analytics.Client.Dispose();
 		}
+
+		/// <summary>
+		/// Indicates whether we are tracking or not
+		/// </summary>
+		public static bool AllowTracking { get; private set; }
 
 		#region OSVersion
 		class Version
