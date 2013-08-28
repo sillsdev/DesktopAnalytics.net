@@ -4,6 +4,7 @@ DesktopAnalytics.net
 [Segment.IO](http://segment.io) provides a nice <i>server-oriented</i> library in [Analytics.net](https://github.com/segmentio/Analytics.NET). This project is just one little class that wraps that to provide some standard behavior needed by <i>desktop</i> applications:
 
 + Supplies guids for user ids, saves that in a Settings file
++ Looks up the machine's external IP address and sends that along
 + Set $Browser to the Operating System Version (e.g. "Windows 8").
 + Auto events
  + First launch ("Create" to fit MixPanel's expectation)
@@ -21,25 +22,42 @@ DesktopAnalytics.net
 2) Clone and build this project, or download from TODO
 
 ###Initialization
-    using (new Analytics("mySegmentIOSecret"))
+```c#
+var userInfo = new UserInfo()
+				{
+					FirstName = "John",
+					LastName = "Smith",
+					Email="john@example.com",
+					UILanguageCode= "fr"
+				};
+			userInfo.OtherProperties.Add("FavoriteColor","blue");
+
+    using (new Analytics("mySegmentIOSecret"), userInfo)
 	{	
 		//run your app UI
 	}
+```
 
-If you have a way of letting users disable tracking, pass that value as the second argument:
+If you have a way of letting users (or testers) disable tracking, pass that value as the second argument:
 
-    using (new Analytics("mySegmentIOSecret", allowTracking))
+```c#
+using (new Analytics("mySegmentIOSecret", allowTracking))
+```
 
 ###Tracking
 
-    Analytics.Track("Create New Image");
+```c#
+Analytics.Track("Create New Image");
+```
 
 or
 
-    Analytics.Track("Save PDF", new Dictionary<string, string>() {
+```c#
+Analytics.Track("Save PDF", new Dictionary<string, string>() {
 			{"PageCount",  pageCount}, 
 			{"Layout", "A4Landscape"}
         });
+```
 
 ###Error Reporting
 
