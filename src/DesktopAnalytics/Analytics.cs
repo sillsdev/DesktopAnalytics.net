@@ -3,6 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Segmentio.Model;
 
 namespace DesktopAnalytics
@@ -25,7 +28,7 @@ namespace DesktopAnalytics
 	{
 		private static string _applicationVersion;
 
-		public Analytics(string apiSecret, bool allowTracking=true)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
 		{
 			AllowTracking = allowTracking;
 
@@ -52,16 +55,39 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, new Traits()
+			Traits traits = new Traits()
 				{
-				#if DEBUG
-					{"lastName", "Developer"},
-					{"firstName", System.Environment.UserName},
-				#endif
+					{"lastName", userInfo.LastName}, 
+					{"firstName", userInfo.FirstName}, 
+					{"Email", userInfo.Email},
+					{"UILanguage", userInfo.UILanguageCode},//segmentio collects this in context, but doesn't seem to convey it to MixPanel
 					{"$browser", GetOperatingSystemLabel()}
-					//{ "Email", "joshmo@example.com" },
-				});
+				};
+			foreach (var property in userInfo.OtherProperties)
+			{
+				if(!string.IsNullOrWhiteSpace(property.Value))
+					traits.Add(property.Key, property.Value);
+			}
+			
+			/*this was cool, but SegmentIO is sending the IP to Mixpanel, so theirs no point in looking it up ourselves
+			try
+			{
+				foreach (var property in GetLocationPropertiesOfThisMachine())
+				{
+					traits.Add(property.Key, property.Value);
+				}
+			}
+			catch (Exception)
+			{
+				//swallow
+			}*/
 
+			var context = new Context();
+			
+			context.SetLanguage(userInfo.UILanguageCode);
+
+			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits, context);
+						
 			_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
@@ -125,6 +151,29 @@ namespace DesktopAnalytics
 				return;
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
+		}
+
+		/// <summary>
+		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
+		/// </summary>
+		public static void IdentifyUpdate(UserInfo userInfo)
+		{
+			if (!AllowTracking)
+				return;
+
+			Traits traits = new Traits()
+				{
+					{"lastName", userInfo.LastName},
+					{"firstName", userInfo.FirstName},
+					{"Email", userInfo.Email},
+					{"UILanguage", userInfo.UILanguageCode}
+				};
+			foreach (var property in userInfo.OtherProperties)
+			{
+				if (!string.IsNullOrWhiteSpace(property.Value))
+					traits.Add(property.Key, property.Value);
+			}
+			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits);
 		}
 
 		/// <summary>
@@ -215,5 +264,20 @@ namespace DesktopAnalytics
 			return System.Environment.OSVersion.VersionString;
 		}
 		#endregion
+	}
+
+	/// <summary>
+	/// Used to send id information to analytics; the most natural way to use this is to load
+	/// it from your Settings.Default each time you run, even if you don't know these things
+	/// yet because the user hasn't registered yet. Then even if they register while offline,
+	/// eventually this informatino will be sent when they *are* online.
+	/// </summary>
+	public class UserInfo
+	{
+		public string FirstName="";
+		public string LastName = "";
+		public string Email="";
+		public string UILanguageCode="";
+		public Dictionary<string, string> OtherProperties = new Dictionary<string, string>();
 	}
 }
