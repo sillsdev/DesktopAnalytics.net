@@ -31,6 +31,7 @@ namespace DesktopAnalytics
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
 		{
 			AllowTracking = allowTracking;
+			UrlThatReturnsExternalIpAdress = "http://ipecho.net/plain";
 
 			if (!AllowTracking)
 				return;
@@ -84,6 +85,7 @@ namespace DesktopAnalytics
 
 			var context = new Context();
 			
+			context.SetIp(GetExternalIpAddressOfThisMachine());
 			context.SetLanguage(userInfo.UILanguageCode);
 
 			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits, context);
@@ -118,6 +120,31 @@ namespace DesktopAnalytics
 			AnalyticsSettings.Default.LastVersionLaunched = _applicationVersion;
 			AnalyticsSettings.Default.Save();
 
+		}
+
+		/// <summary>
+		/// Override this for any reason you like, including if the built-in one (http://ipecho.net/plain) stops working some day.
+		/// The service should simply return a page with a body containing the ip address alone. 
+		/// </summary>
+		public static string UrlThatReturnsExternalIpAdress { get; set; }
+
+		private string GetExternalIpAddressOfThisMachine()
+		{
+			using (var client = new WebClient())
+			{
+				return client.DownloadString(UrlThatReturnsExternalIpAdress);
+			}
+		}
+
+		private IEnumerable<KeyValuePair<string,string>> GetLocationPropertiesOfThisMachine()
+		{
+			using (var client = new WebClient())
+			{
+				var json = client.DownloadString("http://freegeoip.net/json");
+				JObject results = JObject.Parse(json);
+				yield return new KeyValuePair<string, string>("Country", (string)results["country_name"]);
+				yield return new KeyValuePair<string, string>("City", (string)results["city"]);
+			}
 		}
 
 		/// <summary>
