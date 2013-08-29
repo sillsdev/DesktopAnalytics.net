@@ -19,9 +19,9 @@
         </dependencies>
     </metadata>
   <files>
-    <file src="output/debug/DesktopAnalytics.dll" target="lib" />
-    <file src="output/debug/DesktopAnalytics.xml" target="lib" />
+    <file src="output/release/DesktopAnalytics.dll" target="lib" />
+    <file src="output/release/DesktopAnalytics.xml" target="lib" />
     <!-- can remove this when Analytics.NET.dll on nuget catches up -->
-    <file src="output/debug/Analytics.NET.dll" target="lib" />
+    <file src="output/release/Analytics.NET.dll" target="lib" />
   </files>
 </package>
