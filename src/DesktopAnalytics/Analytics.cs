@@ -84,8 +84,16 @@ namespace DesktopAnalytics
 			}*/
 
 			var context = new Context();
-			
-			context.SetIp(GetExternalIpAddressOfThisMachine());
+
+			try
+			{
+				context.SetIp(GetExternalIpAddressOfThisMachine());
+			}
+			catch(Exception)
+			{
+				//Swallow. Either the user is offline or the service is. We'll pick up and report their IP in the future.
+			}
+
 			context.SetLanguage(userInfo.UILanguageCode);
 
 			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits, context);
