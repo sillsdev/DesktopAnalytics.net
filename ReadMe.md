@@ -17,6 +17,17 @@ DesktopAnalytics.net
 
 ###Initialization
 ```c#
+    using (new Analytics("mySegmentIOSecret"), userInfo)
+	{	
+		// other setup, and eventually
+		Application.Run();
+	}
+	
+```
+
+If you want to go beyond anonymous users, you can feed information about your user into DA like this:
+
+```c#
 var userInfo = new UserInfo()
 				{
 					FirstName = "John",
@@ -28,7 +39,8 @@ var userInfo = new UserInfo()
 
     using (new Analytics("mySegmentIOSecret"), userInfo)
 	{	
-		//run your app UI
+		// other setup, and eventually
+		Application.Run();
 	}
 ```
 
@@ -63,11 +75,13 @@ In this example, we use an environment variable so that testers and developers d
 
 ###Tracking
 
+Wherever you want to register that something happened, call Track on the static object named "Analytics":
+
 ```c#
 Analytics.Track("Create New Image");
 ```
 
-or
+If you have properties you need to record, add them by passing in a Dictionary<string, string>, like this:
 
 ```c#
 Analytics.Track("Save PDF", new Dictionary<string, string>() {
