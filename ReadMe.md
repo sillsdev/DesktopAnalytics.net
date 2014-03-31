@@ -38,6 +38,29 @@ If you have a way of letting users (or testers) disable tracking, pass that valu
 using (new Analytics("mySegmentIOSecret", allowTracking))
 ```
 
+In this example, we use an environment variable so that testers and developers don't get counted:
+
+```c#
+#if DEBUG
+	//always track if this is a debug built, but track to a different segment.io project
+	using (new Analytics("(the secret for the debug version)"))
+				
+#else
+	// if this is a release build, then allow an envinroment variable to be set to false
+	// so that testers aren't generating false analytics
+	string feedbackSetting = System.Environment.GetEnvironmentVariable("FEEDBACK");
+		        
+	var allowTracking = string.IsNullOrEmpty(feedbackSetting) || feedbackSetting.ToLower() == "yes" || feedbackSetting.ToLower() == "true";
+
+	using (new Analytics("(the secret for the release version)", RegistrationDialog.GetAnalyticsUserInfo(), allowTracking))
+	{
+		// other setup, and eventually
+		Application.Run();
+	}
+		        
+#endif
+```
+
 ###Tracking
 
 ```c#
