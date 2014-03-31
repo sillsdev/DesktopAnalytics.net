@@ -15,12 +15,6 @@ DesktopAnalytics.net
  
 ##Usage
 
-###Adding to your project
-
-1) Follow the instructions at [Segment.io](https://segment.io/libraries/.net) to add the Analytics package.
-
-2) Clone and build this project, or download from TODO
-
 ###Initialization
 ```c#
 var userInfo = new UserInfo()
@@ -62,6 +56,11 @@ Analytics.Track("Save PDF", new Dictionary<string, string>() {
 ###Error Reporting
 
     Analytics.ReportException(error);
+    
+If you've also got LibPalaso in your app, hook up its ExceptionHandler like this:
+
+    ExceptionHandler.AddDelegate((w,e) => DesktopAnalytics.Analytics.ReportException(e.Exception));
+   
 
 ##Dependencies
 
