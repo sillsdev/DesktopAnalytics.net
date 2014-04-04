@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
     <metadata>
         <id>DesktopAnalytics</id>
-        <version>0.2.0</version>
+        <version>0.2.21</version>
         <title>DesktopAnalytics</title>
         <authors>John Hatton</authors>
         <owners>John Hatton</owners>
@@ -19,9 +19,9 @@
         </dependencies>
     </metadata>
   <files>
-    <file src="output/release/DesktopAnalytics.dll" target="lib" />
-    <file src="output/release/DesktopAnalytics.xml" target="lib" />
+    <file src="output/release/lib/net40/DesktopAnalytics.dll" target="lib/net40/" />
+    <file src="output/release/lib/net40/DesktopAnalytics.xml" target="lib/net40/" />
     <!-- can remove this when Analytics.NET.dll on nuget catches up -->
-    <file src="output/release/Analytics.NET.dll" target="lib" />
+    <file src="output/release/lib/net40/Analytics.NET.dll" target="lib/net40/" />
   </files>
 </package>
