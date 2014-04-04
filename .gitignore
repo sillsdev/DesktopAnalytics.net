@@ -10,3 +10,4 @@ packages/
 output/
 *.user
 /*.nupkg
+Publish Example.txt
