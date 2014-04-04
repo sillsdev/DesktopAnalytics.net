@@ -15,13 +15,18 @@ DesktopAnalytics.net
  
 ##Usage
 
-###Adding to your project
-
-1) Follow the instructions at [Segment.io](https://segment.io/libraries/.net) to add the Analytics package.
-
-2) Clone and build this project, or download from TODO
-
 ###Initialization
+```c#
+    using (new Analytics("mySegmentIOSecret"), userInfo)
+	{	
+		// other setup, and eventually
+		Application.Run();
+	}
+	
+```
+
+If you want to go beyond anonymous users, you can feed information about your user into DA like this:
+
 ```c#
 var userInfo = new UserInfo()
 				{
@@ -34,7 +39,8 @@ var userInfo = new UserInfo()
 
     using (new Analytics("mySegmentIOSecret"), userInfo)
 	{	
-		//run your app UI
+		// other setup, and eventually
+		Application.Run();
 	}
 ```
 
@@ -44,13 +50,38 @@ If you have a way of letting users (or testers) disable tracking, pass that valu
 using (new Analytics("mySegmentIOSecret", allowTracking))
 ```
 
+In this example, we use an environment variable so that testers and developers don't get counted:
+
+```c#
+#if DEBUG
+	//always track if this is a debug built, but track to a different segment.io project
+	using (new Analytics("(the secret for the debug version)"))
+				
+#else
+	// if this is a release build, then allow an envinroment variable to be set to false
+	// so that testers aren't generating false analytics
+	string feedbackSetting = System.Environment.GetEnvironmentVariable("FEEDBACK");
+		        
+	var allowTracking = string.IsNullOrEmpty(feedbackSetting) || feedbackSetting.ToLower() == "yes" || feedbackSetting.ToLower() == "true";
+
+	using (new Analytics("(the secret for the release version)", RegistrationDialog.GetAnalyticsUserInfo(), allowTracking))
+	{
+		// other setup, and eventually
+		Application.Run();
+	}
+		        
+#endif
+```
+
 ###Tracking
+
+Wherever you want to register that something happened, call Track on the static object named "Analytics":
 
 ```c#
 Analytics.Track("Create New Image");
 ```
 
-or
+If you have properties you need to record, add them by passing in a Dictionary<string, string>, like this:
 
 ```c#
 Analytics.Track("Save PDF", new Dictionary<string, string>() {
@@ -62,6 +93,11 @@ Analytics.Track("Save PDF", new Dictionary<string, string>() {
 ###Error Reporting
 
     Analytics.ReportException(error);
+    
+If you've also got LibPalaso in your app, hook up its ExceptionHandler like this:
+
+    ExceptionHandler.AddDelegate((w,e) => DesktopAnalytics.Analytics.ReportException(e.Exception));
+   
 
 ##Dependencies
 
