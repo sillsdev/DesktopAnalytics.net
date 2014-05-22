@@ -27,11 +27,16 @@ namespace DesktopAnalytics
 	public class Analytics : IDisposable
 	{
 		private static string _applicationVersion;
+        private static Context _context;
+	    private static Traits _traits;
+	    private static UserInfo _userInfo;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
-		{
+	    public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
+	    {
+	        _userInfo = userInfo;
+
 			AllowTracking = allowTracking;
-			UrlThatReturnsExternalIpAdress = "http://ipecho.net/plain";
+	        UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
 
 			if (!AllowTracking)
 				return;
@@ -56,47 +61,11 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			Traits traits = new Traits()
-				{
-					{"lastName", userInfo.LastName}, 
-					{"firstName", userInfo.FirstName}, 
-					{"Email", userInfo.Email},
-					{"UILanguage", userInfo.UILanguageCode},//segmentio collects this in context, but doesn't seem to convey it to MixPanel
-					{"$browser", GetOperatingSystemLabel()}
-				};
-			foreach (var property in userInfo.OtherProperties)
-			{
-				if(!string.IsNullOrWhiteSpace(property.Value))
-					traits.Add(property.Key, property.Value);
-			}
-			
-			/*this was cool, but SegmentIO is sending the IP to Mixpanel, so theirs no point in looking it up ourselves
-			try
-			{
-				foreach (var property in GetLocationPropertiesOfThisMachine())
-				{
-					traits.Add(property.Key, property.Value);
-				}
-			}
-			catch (Exception)
-			{
-				//swallow
-			}*/
+            _context = new Context();
+            _context.SetLanguage(_userInfo.UILanguageCode);
 
-			var context = new Context();
-
-			try
-			{
-				context.SetIp(GetExternalIpAddressOfThisMachine());
-			}
-			catch(Exception)
-			{
-				//Swallow. Either the user is offline or the service is. We'll pick up and report their IP in the future.
-			}
-
-			context.SetLanguage(userInfo.UILanguageCode);
-
-			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits, context);
+            UpdateSegmentIOInformationOnThisUser();
+            ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 						
 			_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
 
@@ -130,17 +99,64 @@ namespace DesktopAnalytics
 
 		}
 
-		/// <summary>
+	    private static void UpdateSegmentIOInformationOnThisUser()
+	    {
+	        _traits = new Traits()
+	        {
+	            {"lastName", _userInfo.LastName},
+	            {"firstName", _userInfo.FirstName},
+	            {"Email", _userInfo.Email},
+	            {"UILanguage", _userInfo.UILanguageCode},
+	            //segmentio collects this in context, but doesn't seem to convey it to MixPanel
+	            {"$browser", GetOperatingSystemLabel()}
+	        };
+	        foreach (var property in _userInfo.OtherProperties)
+	        {
+	            if (!string.IsNullOrWhiteSpace(property.Value))
+	                _traits.Add(property.Key, property.Value);
+	        }
+
+            if (!AllowTracking)
+                return; 
+            
+            Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _context);
+	    }
+
+        /// <summary>
+        /// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
+        /// </summary>
+        public static void IdentifyUpdate(UserInfo userInfo)
+        {
+            _userInfo = userInfo;
+            UpdateSegmentIOInformationOnThisUser();
+        }
+
+	    /// <summary>
 		/// Override this for any reason you like, including if the built-in one (http://ipecho.net/plain) stops working some day.
 		/// The service should simply return a page with a body containing the ip address alone. 
 		/// </summary>
-		public static string UrlThatReturnsExternalIpAdress { get; set; }
+		public static string UrlThatReturnsExternalIpAddress { get; set; }
 
-		private string GetExternalIpAddressOfThisMachine()
+		private void ReportIpAddressOfThisMachineAsync()
 		{
 			using (var client = new WebClient())
 			{
-				return client.DownloadString(UrlThatReturnsExternalIpAdress);
+			    try
+			    {
+			        Uri uri;
+			        Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
+			        client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
+			        {
+                        _context.SetIp(System.Text.Encoding.UTF8.GetString(e.Result).Trim());
+                        UpdateSegmentIOInformationOnThisUser();
+			        };
+                    client.DownloadDataAsync(uri);
+			     
+			    }
+			    catch (Exception)
+			    {
+			        return;
+			    }
 			}
 		}
 
@@ -186,29 +202,6 @@ namespace DesktopAnalytics
 				return;
 
 			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
-		}
-
-		/// <summary>
-		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
-		/// </summary>
-		public static void IdentifyUpdate(UserInfo userInfo)
-		{
-			if (!AllowTracking)
-				return;
-
-			Traits traits = new Traits()
-				{
-					{"lastName", userInfo.LastName},
-					{"firstName", userInfo.FirstName},
-					{"Email", userInfo.Email},
-					{"UILanguage", userInfo.UILanguageCode}
-				};
-			foreach (var property in userInfo.OtherProperties)
-			{
-				if (!string.IsNullOrWhiteSpace(property.Value))
-					traits.Add(property.Key, property.Value);
-			}
-			Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, traits);
 		}
 
 		/// <summary>
@@ -292,7 +285,7 @@ namespace DesktopAnalytics
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 1, "Windows 7"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 2, "Windows 8"));
             list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1")); 
-			foreach (var version in list)
+            foreach (var version in list)
 			{
 				if (version.Match(System.Environment.OSVersion))
 					return version.Label;// +" " + Environment.OSVersion.ServicePack;

@@ -11,3 +11,4 @@ output/
 *.user
 /*.nupkg
 Publish Example.txt
+ReadMe.html

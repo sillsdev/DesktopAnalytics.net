@@ -108,6 +108,9 @@ The project is currently built for .net 4 client profile. If you get the solutio
 MIT Licensed
 (As are the dependencies, Analytics.Net and Json.Net).
 
+##About Determining User's IP
+DesktopAnalytics.net determines the user's ip by querying a website. Previously, it used ipecho.net, but that has gone down. It is currently using icanhazip.com. If that goes down too, we can change again. Your client can also use any other service you want by setting ````UrlThatReturnsExternalIpAddress````.
+
 ##Roadmap
 Add user notification of tracking and opt-out UI.
 
