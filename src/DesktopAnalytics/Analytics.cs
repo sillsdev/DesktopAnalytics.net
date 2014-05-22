@@ -291,6 +291,7 @@ namespace DesktopAnalytics
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 0, "Vista"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 1, "Windows 7"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 2, "Windows 8"));
+            list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1")); 
 			foreach (var version in list)
 			{
 				if (version.Match(System.Environment.OSVersion))
