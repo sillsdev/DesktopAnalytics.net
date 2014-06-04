@@ -6,6 +6,7 @@ bin/
 obj/
 _ReSharper*/
 *.ncrunchsolution
+*.userprefs
 packages/
 output/
 *.user
