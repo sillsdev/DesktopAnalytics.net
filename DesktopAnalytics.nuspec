@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
     <metadata>
         <id>DesktopAnalytics</id>
-        <version>0.2.21</version>
+        <version>1.1.0</version>
         <title>DesktopAnalytics</title>
         <authors>John Hatton</authors>
         <owners>John Hatton</owners>
@@ -14,14 +14,11 @@
         <copyright />
         <tags>analytics, segment.io, Mixpanel</tags>
         <dependencies>
-          <!-- can uncommnet this when Analytics.NET.dll on nuget catches up 
-          <dependency id="Analytics" version="1.1.0" />-->
+          <dependency id="Analytics" version="2.0.0" />
         </dependencies>
     </metadata>
   <files>
     <file src="output/release/DesktopAnalytics.dll" target="lib/net40/" />
     <file src="output/release/DesktopAnalytics.xml" target="lib/net40/" />
-    <!-- can remove this when Analytics.NET.dll on nuget catches up -->
-    <file src="output/release/Analytics.NET.dll" target="lib/net40/" />
   </files>
 </package>

@@ -12,6 +12,12 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{6897DF
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleApp", "src\SampleApp\SampleApp.csproj", "{D7C7BA95-3ED3-4BD0-9067-E1399A3098A7}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{ECF16303-E5EA-4978-A341-88AF746876AB}"
+	ProjectSection(SolutionItems) = preProject
+		DesktopAnalytics.nuspec = DesktopAnalytics.nuspec
+		ReadMe.md = ReadMe.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -34,6 +40,11 @@ Global
 		{D7C7BA95-3ED3-4BD0-9067-E1399A3098A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D7C7BA95-3ED3-4BD0-9067-E1399A3098A7}.Release|Any CPU.Build.0 = Release|Any CPU
 		{D7C7BA95-3ED3-4BD0-9067-E1399A3098A7}.Release|x86.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+	EndGlobalSection
+	GlobalSection(MonoDevelopProperties) = preSolution
+		StartupItem = src\SampleApp\SampleApp.csproj
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
