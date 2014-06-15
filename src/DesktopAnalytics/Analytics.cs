@@ -36,7 +36,9 @@ namespace DesktopAnalytics
 	        _userInfo = userInfo;
 
 			AllowTracking = allowTracking;
-	        UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
+	        //UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the clien has given us a different url to us
+            if(string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress)) 
+                UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
 
 			if (!AllowTracking)
 				return;
@@ -147,8 +149,16 @@ namespace DesktopAnalytics
 			        Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
 			        client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 			        {
-                        _context.SetIp(System.Text.Encoding.UTF8.GetString(e.Result).Trim());
-                        UpdateSegmentIOInformationOnThisUser();
+			            try
+			            {
+                            _context.SetIp(System.Text.Encoding.UTF8.GetString(e.Result).Trim());
+			            }
+			            catch (Exception)
+			            {
+                            // we get here when the user isn't online
+			                return;
+			            }
+			            UpdateSegmentIOInformationOnThisUser();
 			        };
                     client.DownloadDataAsync(uri);
 			     
