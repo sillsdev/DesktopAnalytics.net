@@ -6,7 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Segmentio.Model;
+using Segment.Model;
 
 namespace DesktopAnalytics
 {
@@ -27,7 +27,7 @@ namespace DesktopAnalytics
 	public class Analytics : IDisposable
 	{
 		private static string _applicationVersion;
-        private static Context _context;
+		private static Options _options;
 	    private static Traits _traits;
 	    private static UserInfo _userInfo;
 
@@ -52,9 +52,9 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			Segmentio.Analytics.Initialize(apiSecret);
-			Segmentio.Analytics.Client.Failed += Client_Failed;
-			Segmentio.Analytics.Client.Succeeded += Client_Succeeded;
+			Segment.Analytics.Initialize(apiSecret);
+			Segment.Analytics.Client.Failed += Client_Failed;
+			Segment.Analytics.Client.Succeeded += Client_Succeeded;
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -63,8 +63,11 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-            _context = new Context();
-            _context.SetLanguage(_userInfo.UILanguageCode);
+			var context = new Context();
+			context.Add("language", _userInfo.UILanguageCode);
+
+			_options = new Options();
+			_options.SetContext(context);
 
             UpdateSegmentIOInformationOnThisUser();
             ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
@@ -75,14 +78,14 @@ namespace DesktopAnalytics
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
-				Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Created", new Properties()
+				Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Created", new Properties()
 					{
 						{"Version", _applicationVersion},
 					});
 			}
 			else if (AnalyticsSettings.Default.LastVersionLaunched != _applicationVersion)
 			{
-				Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Upgrade", new Properties()
+				Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Upgrade", new Properties()
 					{
 						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
 						{"Version", _applicationVersion},
@@ -91,7 +94,7 @@ namespace DesktopAnalytics
 			
 			//we want to record the launch event independent of whether we also recorded a special first launch
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Launch", new Properties()
+			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Launch", new Properties()
 					{
 						{"Version", _applicationVersion},
 					});
@@ -121,7 +124,7 @@ namespace DesktopAnalytics
             if (!AllowTracking)
                 return; 
             
-            Segmentio.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _context);
+			Segment.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
 	    }
 
         /// <summary>
@@ -151,7 +154,7 @@ namespace DesktopAnalytics
 			        {
 			            try
 			            {
-                            _context.SetIp(System.Text.Encoding.UTF8.GetString(e.Result).Trim());
+							_options.Context.Add("ip", System.Text.Encoding.UTF8.GetString(e.Result).Trim());
 			            }
 			            catch (Exception)
 			            {
@@ -191,7 +194,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName);
+			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName);
 		}
 
 		/// <summary>
@@ -211,7 +214,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
+			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
 		}
 
 		/// <summary>
@@ -223,7 +226,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segmentio.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segmentio.Model.Properties()
+			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segment.Model.Properties()
 			{
 					{ "Message", e.Message },
 					{ "Stack Trace", e.StackTrace },
@@ -244,7 +247,7 @@ namespace DesktopAnalytics
 
 		private static void Client_Succeeded(BaseAction action)
 		{
-			Debug.WriteLine("SegmentIO succeeded: " + action.GetAction());
+			Debug.WriteLine("SegmentIO succeeded: " + action.Type);
 		}
 
 		private static void Client_Failed(BaseAction action, Exception e)
@@ -254,8 +257,8 @@ namespace DesktopAnalytics
 
 		public void Dispose()
 		{
-			if(Segmentio.Analytics.Client !=null)
-				Segmentio.Analytics.Client.Dispose();
+			if(Segment.Analytics.Client !=null)
+				Segment.Analytics.Client.Dispose();
 		}
 
 		/// <summary>
