@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Segment.Model;
 
@@ -78,26 +77,19 @@ namespace DesktopAnalytics
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
-				Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Created", new Properties()
-					{
-						{"Version", _applicationVersion},
-					});
+				TrackWithDefaultProperties("Created");
 			}
 			else if (AnalyticsSettings.Default.LastVersionLaunched != _applicationVersion)
 			{
-				Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Upgrade", new Properties()
+				TrackWithDefaultProperties("Upgrade", new Properties
 					{
 						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
-						{"Version", _applicationVersion},
 					});
 			}
 			
 			//we want to record the launch event independent of whether we also recorded a special first launch
 
-			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Launch", new Properties()
-					{
-						{"Version", _applicationVersion},
-					});
+			TrackWithDefaultProperties("Launch");
 			
 			AnalyticsSettings.Default.LastVersionLaunched = _applicationVersion;
 			AnalyticsSettings.Default.Save();
@@ -194,7 +186,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName);
+			TrackWithDefaultProperties(eventName);
 		}
 
 		/// <summary>
@@ -214,7 +206,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, MakeSegmentIOProperties(properties));
+			TrackWithDefaultProperties(eventName, MakeSegmentIOProperties(properties));
 		}
 
 		/// <summary>
@@ -226,11 +218,10 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, "Exception", new Segment.Model.Properties()
+			TrackWithDefaultProperties("Exception", new Properties()
 			{
 					{ "Message", e.Message },
-					{ "Stack Trace", e.StackTrace },
-					{ "Version", _applicationVersion}
+					{ "Stack Trace", e.StackTrace }
 			});
 		}
 
@@ -304,6 +295,30 @@ namespace DesktopAnalytics
 					return version.Label;// +" " + Environment.OSVersion.ServicePack;
 			}
 			return System.Environment.OSVersion.VersionString;
+		}
+
+		/// <summary>
+		/// All calls to Segment.Analytics.Client.Track should run through here so we can provide defaults for every event
+		/// </summary>
+		private static void TrackWithDefaultProperties(string eventName, Properties properties = null)
+		{
+			EnsureDefaults(ref properties);
+			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
+		}
+
+		private static void EnsureDefaults(ref Properties properties)
+		{
+			if (properties == null)
+				properties = new Properties();
+			if (!properties.ContainsKey("Version"))
+				properties.Add("Version", _applicationVersion);
+			if (!properties.ContainsKey("UserName"))
+				properties.Add("UserName", GetUserNameForEvent());
+		}
+
+		private static string GetUserNameForEvent()
+		{
+			return _userInfo == null ? "unknown" : _userInfo.FirstName + " " + _userInfo.LastName;
 		}
 		#endregion
 	}
