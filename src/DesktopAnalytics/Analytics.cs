@@ -70,8 +70,23 @@ namespace DesktopAnalytics
 
             UpdateSegmentIOInformationOnThisUser();
             ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
-						
-			_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
+
+		    try
+		    {
+				_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
+		    }
+		    catch (NullReferenceException)
+		    {
+			    try
+			    {
+					// GetEntryAssembly is null for MAF plugins
+					_applicationVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+			    }
+				catch (NullReferenceException)
+			    {
+				    // This probably can't happen, but if it does, just roll with it.
+			    }
+		    }
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
@@ -310,7 +325,7 @@ namespace DesktopAnalytics
 		{
 			if (properties == null)
 				properties = new Properties();
-			if (!properties.ContainsKey("Version"))
+			if (!properties.ContainsKey("Version") && _applicationVersion != null)
 				properties.Add("Version", _applicationVersion);
 			if (!properties.ContainsKey("UserName"))
 				properties.Add("UserName", GetUserNameForEvent());
