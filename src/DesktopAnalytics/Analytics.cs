@@ -329,6 +329,8 @@ namespace DesktopAnalytics
 				properties.Add("Version", _applicationVersion);
 			if (!properties.ContainsKey("UserName"))
 				properties.Add("UserName", GetUserNameForEvent());
+			if (!properties.ContainsKey("Browser"))
+				properties.Add("Browser", GetOperatingSystemLabel());
 		}
 
 		private static string GetUserNameForEvent()
