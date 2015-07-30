@@ -230,14 +230,31 @@ namespace DesktopAnalytics
 		/// <param name="e"></param>
 		public static void ReportException(Exception e)
 		{
+			ReportException(e, null);
+		}
+
+		/// <summary>
+		/// Sends the exception's message and stacktrace, plus additional information the
+		/// program thinks may be relevant.
+		/// </summary>
+		public static void ReportException(Exception e, Dictionary<string, string> moreProperties)
+		{
 			if (!AllowTracking)
 				return;
 
-			TrackWithDefaultProperties("Exception", new Properties()
+			var props = new Properties()
 			{
-					{ "Message", e.Message },
-					{ "Stack Trace", e.StackTrace }
-			});
+				{ "Message", e.Message },
+				{ "Stack Trace", e.StackTrace }
+			};
+			if (moreProperties != null)
+			{
+				foreach (var key in moreProperties.Keys)
+				{
+					props.Add(key, moreProperties[key]);
+				}
+			}
+			TrackWithDefaultProperties("Exception", props);
 		}
 
 		private static Properties MakeSegmentIOProperties(Dictionary<string, string> properties)
