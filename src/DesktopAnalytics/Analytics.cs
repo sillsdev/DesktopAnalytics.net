@@ -314,19 +314,166 @@ namespace DesktopAnalytics
 
 		private static string GetOperatingSystemLabel()
 		{
+			if (Environment.OSVersion.Platform == PlatformID.Unix)
+			{
+				if (UnixName == "Linux")
+					return String.Format("{0} / {1}", LinuxVersion, LinuxDesktop);
+				else
+					return UnixName;	// Maybe "Darwin" for a Mac?
+			}
 			var list = new List<Version>();
 			list.Add(new Version(System.PlatformID.Win32NT, 5, 0, "Windows 2000"));
 			list.Add(new Version(System.PlatformID.Win32NT, 5, 1, "Windows XP"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 0, "Vista"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 1, "Windows 7"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 2, "Windows 8"));
-            list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1")); 
+			list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1"));
+			list.Add(new Version(System.PlatformID.Win32NT, 10, 0, "Windows 10"));
             foreach (var version in list)
 			{
 				if (version.Match(System.Environment.OSVersion))
 					return version.Label;// +" " + Environment.OSVersion.ServicePack;
 			}
 			return System.Environment.OSVersion.VersionString;
+		}
+
+		[System.Runtime.InteropServices.DllImport ("libc")]
+		static extern int uname (IntPtr buf);
+		private static string _unixName;
+		private static string UnixName
+		{
+			get
+			{
+				if (Environment.OSVersion.Platform != PlatformID.Unix)
+					return String.Empty;
+				if (_unixName == null)
+				{
+					IntPtr buf = IntPtr.Zero;
+					try
+					{
+						// This is a hacktastic way of getting sysname from uname()
+						buf = System.Runtime.InteropServices.Marshal.AllocHGlobal(8192);
+						if (uname(buf) == 0)
+							_unixName = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(buf);
+					}
+					catch
+					{
+						_unixName = String.Empty;
+					}
+					finally
+					{
+						if (buf != IntPtr.Zero)
+							System.Runtime.InteropServices.Marshal.FreeHGlobal(buf);
+					}
+				}
+				return _unixName;
+			}
+		}
+
+		private static string _linuxVersion;
+		private static string LinuxVersion
+		{
+			get
+			{
+				if (Environment.OSVersion.Platform != PlatformID.Unix)
+					return String.Empty;
+				if (_linuxVersion == null)
+				{
+					_linuxVersion = String.Empty;
+					if (File.Exists("/etc/wasta-release"))
+					{
+						var versionData = File.ReadAllText("/etc/wasta-release");
+						var versionLines = versionData.Split(new char[]{'\n'}, StringSplitOptions.RemoveEmptyEntries);
+						for (int i = 0; i < versionLines.Length; ++i)
+						{
+							if (versionLines[i].StartsWith("DESCRIPTION=\""))
+							{
+								_linuxVersion = versionLines[i].Substring(13).Trim(new char[]{'"'});
+								break;
+							}
+						}
+					}
+					else if (File.Exists("/etc/lsb-release"))
+					{
+						var versionData = File.ReadAllText("/etc/lsb-release");
+						var versionLines = versionData.Split(new char[]{'\n'}, StringSplitOptions.RemoveEmptyEntries);
+						for (int i = 0; i < versionLines.Length; ++i)
+						{
+							if (versionLines[i].StartsWith("DISTRIB_DESCRIPTION=\""))
+							{
+								_linuxVersion = versionLines[i].Substring(21).Trim(new char[]{'"'});
+								break;
+							}
+						}
+					}
+					else
+					{
+						// If it's linux, it really should have /etc/lsb-release!
+						_linuxVersion = Environment.OSVersion.VersionString;
+					}
+				}
+				return _linuxVersion;
+			}
+		}
+
+		/// <summary>
+		/// On a Unix machine this gets the current desktop environment (gnome/xfce/...), on
+		/// non-Unix machines the platform name.
+		/// </summary>
+		private static string DesktopEnvironment
+		{
+			get
+			{
+				if (Environment.OSVersion.Platform != PlatformID.Unix)
+					return Environment.OSVersion.Platform.ToString();
+
+				// see http://unix.stackexchange.com/a/116694
+				// and http://askubuntu.com/a/227669
+				var currentDesktop = Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
+				if (string.IsNullOrEmpty(currentDesktop))
+				{
+					var dataDirs = Environment.GetEnvironmentVariable("XDG_DATA_DIRS");
+					if (dataDirs != null)
+					{
+						dataDirs = dataDirs.ToLowerInvariant();
+						if (dataDirs.Contains("xfce"))
+							currentDesktop = "XFCE";
+						else if (dataDirs.Contains("kde"))
+							currentDesktop = "KDE";
+						else if (dataDirs.Contains("gnome"))
+							currentDesktop = "Gnome";
+					}
+					if (string.IsNullOrEmpty(currentDesktop))
+						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION");
+				}
+				return currentDesktop.ToLowerInvariant();
+			}
+		}
+
+		private static string _linuxDesktop;
+		/// <summary>
+		/// Get the currently running desktop environment (like Unity, Gnome shell etc)
+		/// </summary>
+		private static string LinuxDesktop
+		{
+			get
+			{
+				if (Environment.OSVersion.Platform != PlatformID.Unix)
+					return string.Empty;
+				if (_linuxDesktop == null)
+				{
+					// see http://unix.stackexchange.com/a/116694
+					// and http://askubuntu.com/a/227669
+					var currentDesktop = DesktopEnvironment;
+					var mirSession = Environment.GetEnvironmentVariable ("MIR_SERVER_NAME");
+					var additionalInfo = string.Empty;
+					if (!string.IsNullOrEmpty (mirSession))
+						additionalInfo = " [display server: Mir]";
+					var gdmSession = Environment.GetEnvironmentVariable ("GDMSESSION");
+					_linuxDesktop = String.Format ("{0} ({1}{2})", currentDesktop, gdmSession, additionalInfo);
+				}
+				return _linuxDesktop;
+			}
 		}
 
 		/// <summary>
