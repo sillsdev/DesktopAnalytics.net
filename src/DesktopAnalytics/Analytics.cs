@@ -445,7 +445,7 @@ namespace DesktopAnalytics
 							currentDesktop = "Gnome";
 					}
 					if (string.IsNullOrEmpty(currentDesktop))
-						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION");
+						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? string.Empty;
 				}
 				return currentDesktop.ToLowerInvariant();
 			}
@@ -470,7 +470,7 @@ namespace DesktopAnalytics
 					var additionalInfo = string.Empty;
 					if (!string.IsNullOrEmpty (mirSession))
 						additionalInfo = " [display server: Mir]";
-					var gdmSession = Environment.GetEnvironmentVariable ("GDMSESSION");
+					var gdmSession = Environment.GetEnvironmentVariable ("GDMSESSION") ?? "not set";
 					_linuxDesktop = String.Format ("{0} ({1}{2})", currentDesktop, gdmSession, additionalInfo);
 				}
 				return _linuxDesktop;
