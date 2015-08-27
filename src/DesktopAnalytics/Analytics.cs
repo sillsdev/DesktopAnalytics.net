@@ -4,7 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
+using System.Reflection;
+using System.Xml.Linq;
+using System.Xml.XPath;
 using Newtonsoft.Json.Linq;
 using Segment.Model;
 
@@ -51,6 +55,78 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.NeedUpgrade = false;
 				AnalyticsSettings.Default.Save();
 			}
+
+		    const string UserConfigFileName = "user.config";
+
+		    if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+		    {
+			    // Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
+				// We really want to use the same ID if possible to keep our statistics valid.
+
+				// We need to get the company name and exe name of the main application, without introducing a dependency on
+				// Windows.Forms, so we can't use the Windows.Forms.Application methods.
+			    var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
+			    var productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
+				AssemblyCompanyAttribute companyAttribute = AssemblyCompanyAttribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
+			    if (companyAttribute != null && !string.IsNullOrEmpty(productExe))
+			    {
+				    string companyName = companyAttribute.Company;
+				    var settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+					    companyName);
+					// Coincidentally, 5 is a good length for Bloom...better heuristic later?
+					// For example, we could
+					// - look for the last capital letter, and truncate to there. BloomAlpha->Bloom; HearThisAlpha->HearThis; *HearThis->Hear; TEX->?TE; TEXAlpha->TEX; BloomBetaOne->*BloomBeta
+					// - look for the first non-initial capital letter, and truncate from there on. BloomAlpha->Bloom, HearThisAlpha->*Hear; HearThis->*Hear; TEX->*T' TEXAlpha->TEX; BloomBetaOne->Bloom
+					// - look for a non-initial capital letter following at least one LC letter. Similar except TEX->TEX, TEXAlpha->*TEXAlpha.
+					// In general, truncating too much is better than too little; too much just makes us slow, while too little may make us miss useful results.
+					// It's true that truncating too much (like TEX->TE) may cause us to fetch an analytics ID from the wrong program. But even this is harmless, AFAIK.
+				    var index = Math.Min(5, productExe.Length);
+				    var prefix = productExe.Substring(0, index);
+				    var pattern = prefix + "*";
+					var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
+					var possibleFolders = new List<string>();
+				    foreach (var folder in possibleParentFolders)
+				    {
+						possibleFolders.AddRange(Directory.GetDirectories(folder).Where(f => File.Exists(Path.Combine(f, UserConfigFileName))));
+				    }
+					
+					possibleFolders.Sort((first, second) =>
+					{
+						if (first == second) return 0;
+						var firstConfigPath = Path.Combine(first, UserConfigFileName);
+						var secondConfigPath = Path.Combine(second, UserConfigFileName);
+						// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
+						// That is, we end up with the most recently modified user.config first.
+						return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
+					});
+				    foreach (var folder in possibleFolders)
+				    {
+					    try
+					    {
+						    var doc = XDocument.Load(Path.Combine(folder, UserConfigFileName));
+						    var idSetting =
+							    doc.XPathSelectElement(
+								    "configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
+						    if (idSetting == null)
+							    continue;
+						    string analyticsId = idSetting.Value;
+						    if (string.IsNullOrEmpty(analyticsId))
+							    continue;
+						    AnalyticsSettings.Default.IdForAnalytics = analyticsId;
+						    AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
+							AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
+							AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
+							AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
+							AnalyticsSettings.Default.Save();
+						    break;
+					    }
+					    catch (Exception)
+					    {
+							// If anything goes wrong we just won't try to get our ID from this source.
+					    }
+				    }
+			    }
+		    }
 
 			Segment.Analytics.Initialize(apiSecret);
 			Segment.Analytics.Client.Failed += Client_Failed;
@@ -112,7 +188,20 @@ namespace DesktopAnalytics
 
 		}
 
-	    private static void UpdateSegmentIOInformationOnThisUser()
+		// If the specified setting's current value is empty, try to extract it from the document.
+		private string ExtractSetting(string current, XDocument doc, string name)
+		{
+			if (!string.IsNullOrEmpty(current))
+				return current;
+			var setting =
+				doc.XPathSelectElement(
+					"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='" + name + "']");
+			if (setting == null)
+				return "";
+			return setting.Value;
+		}
+
+		private static void UpdateSegmentIOInformationOnThisUser()
 	    {
 	        _traits = new Traits()
 	        {
