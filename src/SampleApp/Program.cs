@@ -25,6 +25,7 @@ namespace SampleApp
 
 			using (new Analytics(args[0], userInfo))
 			{
+				DesktopAnalytics.Analytics.SetApplicationProperty("channel", "beta");
 				DesktopAnalytics.Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
 				Segment.Analytics.Client.Flush();
 				Console.WriteLine("Sleeping for a 20 seconds to give it all a chance to send an event in the background..."); 

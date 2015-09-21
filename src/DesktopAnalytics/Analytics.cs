@@ -30,13 +30,21 @@ namespace DesktopAnalytics
 	/// </example>
 	public class Analytics : IDisposable
 	{
-		private static string _applicationVersion;
 		private static Options _options;
 	    private static Traits _traits;
 	    private static UserInfo _userInfo;
+		private static Analytics _singleton;
+		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent = new Dictionary<string, string>();
 
-	    public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
+
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
 	    {
+		    if (_singleton != null)
+		    {
+			    throw new ApplicationException("You can only construct a single Analytics object.");
+		    }
+		    _singleton = this;
+
 	        _userInfo = userInfo;
 
 			AllowTracking = allowTracking;
@@ -46,6 +54,7 @@ namespace DesktopAnalytics
 
 			if (!AllowTracking)
 				return;
+
 
 			//bring in settings from any previous version
 			if (AnalyticsSettings.Default.NeedUpgrade)
@@ -147,33 +156,39 @@ namespace DesktopAnalytics
 
             UpdateSegmentIOInformationOnThisUser();
             ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
-
-		    try
+			string versionNumberWithBuild = "";
+            try
 		    {
-				_applicationVersion = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
+				versionNumberWithBuild = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
 		    }
 		    catch (NullReferenceException)
 		    {
 			    try
 			    {
 					// GetEntryAssembly is null for MAF plugins
-					_applicationVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+					versionNumberWithBuild = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
 			    }
 				catch (NullReferenceException)
 			    {
 				    // This probably can't happen, but if it does, just roll with it.
 			    }
 		    }
+			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a,b)=>a+"."+b);
+			SetApplicationProperty("Version", versionNumber);
+			SetApplicationProperty("FullVersion", versionNumberWithBuild);
+			SetApplicationProperty("UserName", GetUserNameForEvent());
+			SetApplicationProperty("Browser", GetOperatingSystemLabel());
+
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
-				TrackWithDefaultProperties("Created");
+				TrackWithApplicationProperties("Created");
 			}
-			else if (AnalyticsSettings.Default.LastVersionLaunched != _applicationVersion)
+			else if (AnalyticsSettings.Default.LastVersionLaunched != versionNumberWithBuild)
 			{
-				TrackWithDefaultProperties("Upgrade", new Properties
+				TrackWithApplicationProperties("Upgrade", new Properties
 					{
 						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
 					});
@@ -181,9 +196,9 @@ namespace DesktopAnalytics
 			
 			//we want to record the launch event independent of whether we also recorded a special first launch
 
-			TrackWithDefaultProperties("Launch");
+			TrackWithApplicationProperties("Launch");
 			
-			AnalyticsSettings.Default.LastVersionLaunched = _applicationVersion;
+			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
 			AnalyticsSettings.Default.Save();
 
 		}
@@ -291,7 +306,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			TrackWithDefaultProperties(eventName);
+			TrackWithApplicationProperties(eventName);
 		}
 
 		/// <summary>
@@ -311,7 +326,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			TrackWithDefaultProperties(eventName, MakeSegmentIOProperties(properties));
+			TrackWithApplicationProperties(eventName, MakeSegmentIOProperties(properties));
 		}
 
 		/// <summary>
@@ -344,7 +359,7 @@ namespace DesktopAnalytics
 					props.Add(key, moreProperties[key]);
 				}
 			}
-			TrackWithDefaultProperties("Exception", props);
+			TrackWithApplicationProperties("Exception", props);
 		}
 
 		private static Properties MakeSegmentIOProperties(Dictionary<string, string> properties)
@@ -569,22 +584,39 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// All calls to Segment.Analytics.Client.Track should run through here so we can provide defaults for every event
 		/// </summary>
-		private static void TrackWithDefaultProperties(string eventName, Properties properties = null)
+		private static void TrackWithApplicationProperties(string eventName, Properties properties = null)
 		{
-			EnsureDefaults(ref properties);
+			if (_singleton == null)
+			{
+				throw new ApplicationException("The application must first construct a single Analytics object");
+			}
+			if (properties == null)
+				properties = new Properties();
+			foreach (var p in _singleton._propertiesThatGoWithEveryEvent)
+			{
+				if (properties.ContainsKey(p.Key))
+					properties.Remove(p.Key);
+				properties.Add(p.Key, p.Value ?? string.Empty);
+			}
 			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
 
-		private static void EnsureDefaults(ref Properties properties)
+		/// <summary>
+		/// Add a property that says something about the application, which goes out with every event.
+		/// </summary>
+		/// <param name="key"></param>
+		/// <param name="value"></param>
+		public static void SetApplicationProperty(string key, string value)
 		{
-			if (properties == null)
-				properties = new Properties();
-			if (!properties.ContainsKey("Version") && _applicationVersion != null)
-				properties.Add("Version", _applicationVersion);
-			if (!properties.ContainsKey("UserName"))
-				properties.Add("UserName", GetUserNameForEvent());
-			if (!properties.ContainsKey("Browser"))
-				properties.Add("Browser", GetOperatingSystemLabel());
+			if (string.IsNullOrEmpty(key))
+				throw new ArgumentNullException(key);
+			if (value == null)
+				value = string.Empty;
+			if (_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
+			{
+				_singleton._propertiesThatGoWithEveryEvent.Remove(key);
+			}
+			_singleton._propertiesThatGoWithEveryEvent.Add(key,value);
 		}
 
 		private static string GetUserNameForEvent()
