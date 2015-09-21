@@ -34,18 +34,32 @@ namespace DesktopAnalytics
 	    private static Traits _traits;
 	    private static UserInfo _userInfo;
 		private static Analytics _singleton;
-		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent = new Dictionary<string, string>();
+		private  Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking=true)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking)
+		{
+			
+		}
+
+		/// <summary>
+		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
+		/// </summary>
+		/// <param name="apiSecret">The segment.com apiSecret</param>
+		/// <param name="userInfo">Information about the user that you have previous collected</param>
+		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
+		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string,string> propertiesThatGoWithEveryEvent,  bool allowTracking=true)
 	    {
 		    if (_singleton != null)
 		    {
 			    throw new ApplicationException("You can only construct a single Analytics object.");
 		    }
 		    _singleton = this;
+			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-	        _userInfo = userInfo;
+			_userInfo = userInfo;
 
 			AllowTracking = allowTracking;
 	        //UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the clien has given us a different url to us
