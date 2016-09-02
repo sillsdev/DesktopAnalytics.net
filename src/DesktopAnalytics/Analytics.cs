@@ -35,7 +35,8 @@ namespace DesktopAnalytics
 	    private static UserInfo _userInfo;
 		private static Analytics _singleton;
 		private  Dictionary<string, string> _propertiesThatGoWithEveryEvent;
-
+		private static int _exceptionCount = 0;
+		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true)
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking)
@@ -354,12 +355,21 @@ namespace DesktopAnalytics
 
 		/// <summary>
 		/// Sends the exception's message and stacktrace, plus additional information the
-		/// program thinks may be relevant.
+		/// program thinks may be relevant. Limitted to MAX_EXCEPTION_REPORTS_PER_RUN
 		/// </summary>
 		public static void ReportException(Exception e, Dictionary<string, string> moreProperties)
 		{
 			if (!AllowTracking)
 				return;
+
+			_exceptionCount++;
+
+			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions, 
+			// in the background, blowing through our Analytics service limits and getting us kicked off.
+			if (_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
+			{
+				return;
+			}
 
 			var props = new Properties()
 			{
