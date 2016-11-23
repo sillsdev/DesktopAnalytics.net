@@ -210,9 +210,9 @@ namespace DesktopAnalytics
 			}
 			
 			//we want to record the launch event independent of whether we also recorded a special first launch
+			// But that is done after we retrieve (or fail to retrieve) our external ip address.
+			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
 
-			TrackWithApplicationProperties("Launch");
-			
 			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
 			AnalyticsSettings.Default.Save();
 
@@ -281,14 +281,19 @@ namespace DesktopAnalytics
 			        {
 			            try
 			            {
-							_options.Context.Add("ip", System.Text.Encoding.UTF8.GetString(e.Result).Trim());
+							var externalIpAddress = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
+							Debug.WriteLine(String.Format("DesktopAnalytics: external ip = {0}", externalIpAddress));
+							_options.Context.Add("ip", externalIpAddress);
+							_propertiesThatGoWithEveryEvent.Add("ip", externalIpAddress);
 			            }
 			            catch (Exception)
 			            {
                             // we get here when the user isn't online
+			                TrackWithApplicationProperties("Launch");
 			                return;
 			            }
 			            UpdateSegmentIOInformationOnThisUser();
+			            TrackWithApplicationProperties("Launch");
 			        };
                     client.DownloadDataAsync(uri);
 			     
