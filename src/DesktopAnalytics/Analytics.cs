@@ -288,7 +288,8 @@ namespace DesktopAnalytics
 			            }
 			            catch (Exception)
 			            {
-                            // we get here when the user isn't online
+                            // we get here when the user isn't online, or anything else prevents us from 
+                            // getting their ip. Still worth reporting the launch in the later case.
 			                TrackWithApplicationProperties("Launch");
 			                return;
 			            }
