@@ -26,14 +26,20 @@ namespace SampleApp
 			var propertiesThatGoWithEveryEvent = new Dictionary<string, string> {{"channel", "beta"}};
 			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent))
 			{
+				Thread.Sleep(3000);
 				//note that anything we set from here on didn't make it into the initial "Launch" event. Things we want to 
 				//be in that event should go in the propertiesThatGoWithEveryEvent parameter of the constructor.
+
 				DesktopAnalytics.Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
-
-
 				DesktopAnalytics.Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
 				Segment.Analytics.Client.Flush();
-				Console.WriteLine("Sleeping for a 20 seconds to give it all a chance to send an event in the background..."); 
+				Console.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
+				Thread.Sleep(20000);
+
+				DesktopAnalytics.Analytics.SetApplicationProperty("TimeSinceLaunch", "23 seconds");
+				DesktopAnalytics.Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "42"}});
+				Segment.Analytics.Client.Flush();
+				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 			}
 		}
