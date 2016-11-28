@@ -84,7 +84,9 @@
       <LastGenOutput>AnalyticsSettings1.Designer.cs</LastGenOutput>
     </None>
     <None Include="app.config" />
-    <None Include="packages.config" />
+    <None Include="packages.config">
+      <SubType>Designer</SubType>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <WCFMetadata Include="Service References\" />

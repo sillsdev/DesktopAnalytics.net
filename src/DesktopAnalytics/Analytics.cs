@@ -31,17 +31,17 @@ namespace DesktopAnalytics
 	public class Analytics : IDisposable
 	{
 		private static Options _options;
-	    private static Traits _traits;
-	    private static UserInfo _userInfo;
+		private static Traits _traits;
+		private static UserInfo _userInfo;
 		private static Analytics _singleton;
-		private  Dictionary<string, string> _propertiesThatGoWithEveryEvent;
+		private Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int _exceptionCount = 0;
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true)
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking)
 		{
-			
+
 		}
 
 		/// <summary>
@@ -51,21 +51,21 @@ namespace DesktopAnalytics
 		/// <param name="userInfo">Information about the user that you have previous collected</param>
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string,string> propertiesThatGoWithEveryEvent,  bool allowTracking=true)
-	    {
-		    if (_singleton != null)
-		    {
-			    throw new ApplicationException("You can only construct a single Analytics object.");
-		    }
-		    _singleton = this;
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true)
+		{
+			if (_singleton != null)
+			{
+				throw new ApplicationException("You can only construct a single Analytics object.");
+			}
+			_singleton = this;
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
 			_userInfo = userInfo;
 
 			AllowTracking = allowTracking;
-	        //UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the clien has given us a different url to us
-            if(string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress)) 
-                UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
+			//UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the clien has given us a different url to us
+			if (string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
+				UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
 
 			if (!AllowTracking)
 				return;
@@ -80,23 +80,23 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-		    const string UserConfigFileName = "user.config";
+			const string UserConfigFileName = "user.config";
 
-		    if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
-		    {
-			    // Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
+			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+			{
+				// Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
 				// We really want to use the same ID if possible to keep our statistics valid.
 
 				// We need to get the company name and exe name of the main application, without introducing a dependency on
 				// Windows.Forms, so we can't use the Windows.Forms.Application methods.
-			    var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
-			    var productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
+				var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
+				var productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
 				AssemblyCompanyAttribute companyAttribute = AssemblyCompanyAttribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-			    if (companyAttribute != null && !string.IsNullOrEmpty(productExe))
-			    {
-				    string companyName = companyAttribute.Company;
-				    var settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-					    companyName);
+				if (companyAttribute != null && !string.IsNullOrEmpty(productExe))
+				{
+					string companyName = companyAttribute.Company;
+					var settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+						companyName);
 					// Coincidentally, 5 is a good length for Bloom...better heuristic later?
 					// For example, we could
 					// - look for the last capital letter, and truncate to there. BloomAlpha->Bloom; HearThisAlpha->HearThis; *HearThis->Hear; TEX->?TE; TEXAlpha->TEX; BloomBetaOne->*BloomBeta
@@ -104,53 +104,54 @@ namespace DesktopAnalytics
 					// - look for a non-initial capital letter following at least one LC letter. Similar except TEX->TEX, TEXAlpha->*TEXAlpha.
 					// In general, truncating too much is better than too little; too much just makes us slow, while too little may make us miss useful results.
 					// It's true that truncating too much (like TEX->TE) may cause us to fetch an analytics ID from the wrong program. But even this is harmless, AFAIK.
-				    var index = Math.Min(5, productExe.Length);
-				    var prefix = productExe.Substring(0, index);
-				    var pattern = prefix + "*";
+					var index = Math.Min(5, productExe.Length);
+					var prefix = productExe.Substring(0, index);
+					var pattern = prefix + "*";
 					var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
 					var possibleFolders = new List<string>();
-				    foreach (var folder in possibleParentFolders)
-				    {
+					foreach (var folder in possibleParentFolders)
+					{
 						possibleFolders.AddRange(Directory.GetDirectories(folder).Where(f => File.Exists(Path.Combine(f, UserConfigFileName))));
-				    }
-					
+					}
+
 					possibleFolders.Sort((first, second) =>
 					{
-						if (first == second) return 0;
+						if (first == second)
+							return 0;
 						var firstConfigPath = Path.Combine(first, UserConfigFileName);
 						var secondConfigPath = Path.Combine(second, UserConfigFileName);
 						// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
 						// That is, we end up with the most recently modified user.config first.
 						return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
 					});
-				    foreach (var folder in possibleFolders)
-				    {
-					    try
-					    {
-						    var doc = XDocument.Load(Path.Combine(folder, UserConfigFileName));
-						    var idSetting =
-							    doc.XPathSelectElement(
-								    "configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
-						    if (idSetting == null)
-							    continue;
-						    string analyticsId = idSetting.Value;
-						    if (string.IsNullOrEmpty(analyticsId))
-							    continue;
-						    AnalyticsSettings.Default.IdForAnalytics = analyticsId;
-						    AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
+					foreach (var folder in possibleFolders)
+					{
+						try
+						{
+							var doc = XDocument.Load(Path.Combine(folder, UserConfigFileName));
+							var idSetting =
+								doc.XPathSelectElement(
+									"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
+							if (idSetting == null)
+								continue;
+							string analyticsId = idSetting.Value;
+							if (string.IsNullOrEmpty(analyticsId))
+								continue;
+							AnalyticsSettings.Default.IdForAnalytics = analyticsId;
+							AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
 							AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
 							AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
 							AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
 							AnalyticsSettings.Default.Save();
-						    break;
-					    }
-					    catch (Exception)
-					    {
+							break;
+						}
+						catch (Exception)
+						{
 							// If anything goes wrong we just won't try to get our ID from this source.
-					    }
-				    }
-			    }
-		    }
+						}
+					}
+				}
+			}
 
 			Segment.Analytics.Initialize(apiSecret);
 			Segment.Analytics.Client.Failed += Client_Failed;
@@ -169,26 +170,26 @@ namespace DesktopAnalytics
 			_options = new Options();
 			_options.SetContext(context);
 
-            UpdateSegmentIOInformationOnThisUser();
-            ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
+			UpdateSegmentIOInformationOnThisUser();
+			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 			string versionNumberWithBuild = "";
-            try
-		    {
+			try
+			{
 				versionNumberWithBuild = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
-		    }
-		    catch (NullReferenceException)
-		    {
-			    try
-			    {
+			}
+			catch (NullReferenceException)
+			{
+				try
+				{
 					// GetEntryAssembly is null for MAF plugins
 					versionNumberWithBuild = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
-			    }
+				}
 				catch (NullReferenceException)
-			    {
-				    // This probably can't happen, but if it does, just roll with it.
-			    }
-		    }
-			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a,b)=>a+"."+b);
+				{
+					// This probably can't happen, but if it does, just roll with it.
+				}
+			}
+			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
@@ -208,7 +209,7 @@ namespace DesktopAnalytics
 						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
 					});
 			}
-			
+
 			//we want to record the launch event independent of whether we also recorded a special first launch
 			// But that is done after we retrieve (or fail to retrieve) our external ip address.
 			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
@@ -232,40 +233,40 @@ namespace DesktopAnalytics
 		}
 
 		private static void UpdateSegmentIOInformationOnThisUser()
-	    {
-	        _traits = new Traits()
-	        {
-	            {"lastName", _userInfo.LastName},
-	            {"firstName", _userInfo.FirstName},
-	            {"Email", _userInfo.Email},
-	            {"UILanguage", _userInfo.UILanguageCode},
+		{
+			_traits = new Traits()
+			{
+				{"lastName", _userInfo.LastName},
+				{"firstName", _userInfo.FirstName},
+				{"Email", _userInfo.Email},
+				{"UILanguage", _userInfo.UILanguageCode},
 	            //segmentio collects this in context, but doesn't seem to convey it to MixPanel
 	            {"$browser", GetOperatingSystemLabel()}
-	        };
-	        foreach (var property in _userInfo.OtherProperties)
-	        {
-	            if (!string.IsNullOrWhiteSpace(property.Value))
-	                _traits.Add(property.Key, property.Value);
-	        }
+			};
+			foreach (var property in _userInfo.OtherProperties)
+			{
+				if (!string.IsNullOrWhiteSpace(property.Value))
+					_traits.Add(property.Key, property.Value);
+			}
 
-            if (!AllowTracking)
-                return; 
-            
+			if (!AllowTracking)
+				return;
+
 			Segment.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
-	    }
+		}
 
-        /// <summary>
-        /// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
-        /// </summary>
-        public static void IdentifyUpdate(UserInfo userInfo)
-        {
-            _userInfo = userInfo;
-            UpdateSegmentIOInformationOnThisUser();
-        }
+		/// <summary>
+		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
+		/// </summary>
+		public static void IdentifyUpdate(UserInfo userInfo)
+		{
+			_userInfo = userInfo;
+			UpdateSegmentIOInformationOnThisUser();
+		}
 
-	    /// <summary>
+		/// <summary>
 		/// Override this for any reason you like, including if the built-in one (http://ipecho.net/plain) stops working some day.
-		/// The service should simply return a page with a body containing the ip address alone. 
+		/// The service should simply return a page with a body containing the ip address alone.
 		/// </summary>
 		public static string UrlThatReturnsExternalIpAddress { get; set; }
 
@@ -273,40 +274,40 @@ namespace DesktopAnalytics
 		{
 			using (var client = new WebClient())
 			{
-			    try
-			    {
-			        Uri uri;
-			        Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
-			        client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
-			        {
-			            try
-			            {
+				try
+				{
+					Uri uri;
+					Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
+					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
+					{
+						try
+						{
 							var externalIpAddress = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
 							Debug.WriteLine(String.Format("DesktopAnalytics: external ip = {0}", externalIpAddress));
 							_options.Context.Add("ip", externalIpAddress);
 							_propertiesThatGoWithEveryEvent.Add("ip", externalIpAddress);
-			            }
-			            catch (Exception)
-			            {
-                            // we get here when the user isn't online, or anything else prevents us from 
-                            // getting their ip. Still worth reporting the launch in the later case.
-			                TrackWithApplicationProperties("Launch");
-			                return;
-			            }
-			            UpdateSegmentIOInformationOnThisUser();
-			            TrackWithApplicationProperties("Launch");
-			        };
-                    client.DownloadDataAsync(uri);
-			     
-			    }
-			    catch (Exception)
-			    {
-			        return;
-			    }
+						}
+						catch (Exception)
+						{
+							// we get here when the user isn't online, or anything else prevents us from
+							// getting their ip. Still worth reporting the launch in the later case.
+							TrackWithApplicationProperties("Launch");
+							return;
+						}
+						UpdateSegmentIOInformationOnThisUser();
+						TrackWithApplicationProperties("Launch");
+					};
+					client.DownloadDataAsync(uri);
+
+				}
+				catch (Exception)
+				{
+					return;
+				}
 			}
 		}
 
-		private IEnumerable<KeyValuePair<string,string>> GetLocationPropertiesOfThisMachine()
+		private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()
 		{
 			using (var client = new WebClient())
 			{
@@ -336,7 +337,7 @@ namespace DesktopAnalytics
 		/// <example>
 		///	Analytics.RecordEvent("Save PDF", new Dictionary<string, string>()
 		/// {
-		///		{"Portion",  Enum.GetName(typeof(BookletPortions), BookletPortion)}, 
+		///		{"Portion",  Enum.GetName(typeof(BookletPortions), BookletPortion)},
 		///		{"Layout", PageLayout.ToString()}
 		///	});
 		///	</example>
@@ -370,7 +371,7 @@ namespace DesktopAnalytics
 
 			_exceptionCount++;
 
-			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions, 
+			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions,
 			// in the background, blowing through our Analytics service limits and getting us kicked off.
 			if (_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
 			{
@@ -400,6 +401,7 @@ namespace DesktopAnalytics
 				prop.Add(key, properties[key]);
 			}
 			return prop;
+			return prop;
 		}
 
 
@@ -415,7 +417,7 @@ namespace DesktopAnalytics
 
 		public void Dispose()
 		{
-			if(Segment.Analytics.Client !=null)
+			if (Segment.Analytics.Client != null)
 				Segment.Analytics.Client.Dispose();
 		}
 
@@ -454,7 +456,7 @@ namespace DesktopAnalytics
 				if (UnixName == "Linux")
 					return String.Format("{0} / {1}", LinuxVersion, LinuxDesktop);
 				else
-					return UnixName;	// Maybe "Darwin" for a Mac?
+					return UnixName;    // Maybe "Darwin" for a Mac?
 			}
 			var list = new List<Version>();
 			list.Add(new Version(System.PlatformID.Win32NT, 5, 0, "Windows 2000"));
@@ -464,7 +466,7 @@ namespace DesktopAnalytics
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 2, "Windows 8"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1"));
 			list.Add(new Version(System.PlatformID.Win32NT, 10, 0, "Windows 10"));
-            foreach (var version in list)
+			foreach (var version in list)
 			{
 				if (version.Match(System.Environment.OSVersion))
 					return version.Label;// +" " + Environment.OSVersion.ServicePack;
@@ -472,8 +474,8 @@ namespace DesktopAnalytics
 			return System.Environment.OSVersion.VersionString;
 		}
 
-		[System.Runtime.InteropServices.DllImport ("libc")]
-		static extern int uname (IntPtr buf);
+		[System.Runtime.InteropServices.DllImport("libc")]
+		static extern int uname(IntPtr buf);
 		private static string _unixName;
 		private static string UnixName
 		{
@@ -518,12 +520,12 @@ namespace DesktopAnalytics
 					if (File.Exists("/etc/wasta-release"))
 					{
 						var versionData = File.ReadAllText("/etc/wasta-release");
-						var versionLines = versionData.Split(new char[]{'\n'}, StringSplitOptions.RemoveEmptyEntries);
+						var versionLines = versionData.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 						for (int i = 0; i < versionLines.Length; ++i)
 						{
 							if (versionLines[i].StartsWith("DESCRIPTION=\""))
 							{
-								_linuxVersion = versionLines[i].Substring(13).Trim(new char[]{'"'});
+								_linuxVersion = versionLines[i].Substring(13).Trim(new char[] { '"' });
 								break;
 							}
 						}
@@ -531,12 +533,12 @@ namespace DesktopAnalytics
 					else if (File.Exists("/etc/lsb-release"))
 					{
 						var versionData = File.ReadAllText("/etc/lsb-release");
-						var versionLines = versionData.Split(new char[]{'\n'}, StringSplitOptions.RemoveEmptyEntries);
+						var versionLines = versionData.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 						for (int i = 0; i < versionLines.Length; ++i)
 						{
 							if (versionLines[i].StartsWith("DISTRIB_DESCRIPTION=\""))
 							{
-								_linuxVersion = versionLines[i].Substring(21).Trim(new char[]{'"'});
+								_linuxVersion = versionLines[i].Substring(21).Trim(new char[] { '"' });
 								break;
 							}
 						}
@@ -600,12 +602,12 @@ namespace DesktopAnalytics
 					// see http://unix.stackexchange.com/a/116694
 					// and http://askubuntu.com/a/227669
 					var currentDesktop = DesktopEnvironment;
-					var mirSession = Environment.GetEnvironmentVariable ("MIR_SERVER_NAME");
+					var mirSession = Environment.GetEnvironmentVariable("MIR_SERVER_NAME");
 					var additionalInfo = string.Empty;
-					if (!string.IsNullOrEmpty (mirSession))
+					if (!string.IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
-					var gdmSession = Environment.GetEnvironmentVariable ("GDMSESSION") ?? "not set";
-					_linuxDesktop = String.Format ("{0} ({1}{2})", currentDesktop, gdmSession, additionalInfo);
+					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
+					_linuxDesktop = String.Format("{0} ({1}{2})", currentDesktop, gdmSession, additionalInfo);
 				}
 				return _linuxDesktop;
 			}
@@ -646,7 +648,7 @@ namespace DesktopAnalytics
 			{
 				_singleton._propertiesThatGoWithEveryEvent.Remove(key);
 			}
-			_singleton._propertiesThatGoWithEveryEvent.Add(key,value);
+			_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
 		}
 
 		private static string GetUserNameForEvent()
@@ -664,10 +666,10 @@ namespace DesktopAnalytics
 	/// </summary>
 	public class UserInfo
 	{
-		public string FirstName="";
+		public string FirstName = "";
 		public string LastName = "";
-		public string Email="";
-		public string UILanguageCode="";
+		public string Email = "";
+		public string UILanguageCode = "";
 		public Dictionary<string, string> OtherProperties = new Dictionary<string, string>();
 	}
 }
