@@ -224,7 +224,9 @@ namespace DesktopAnalytics
 						var idSetting =
 							doc.XPathSelectElement(
 								"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
-						string analyticsId = idSetting?.Value;
+						if (idSetting == null)
+							continue;
+						string analyticsId = idSetting.Value;
 						if (string.IsNullOrEmpty(analyticsId))
 							continue;
 						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
