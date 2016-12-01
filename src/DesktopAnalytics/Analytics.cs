@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -30,6 +31,8 @@ namespace DesktopAnalytics
 	/// </example>
 	public class Analytics : IDisposable
 	{
+		private const string kUserConfigFileName = "user.config";
+
 		private static Options _options;
 		private static Traits _traits;
 		private static UserInfo _userInfo;
@@ -51,6 +54,8 @@ namespace DesktopAnalytics
 		/// <param name="userInfo">Information about the user that you have previous collected</param>
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
+		/// <param name="companyName">If non-null, this will be used (if needed) to locate existing config
+		/// files from previous versions</param>
 		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true)
 		{
 			if (_singleton != null)
@@ -63,9 +68,9 @@ namespace DesktopAnalytics
 			_userInfo = userInfo;
 
 			AllowTracking = allowTracking;
-			//UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the clien has given us a different url to us
+			//UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
 			if (string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
-				UrlThatReturnsExternalIpAddress = "http://icanhazip.com";//went down: "http://ipecho.net/plain";
+				UrlThatReturnsExternalIpAddress = "http://icanhazip.com"; //went down: "http://ipecho.net/plain";
 
 			if (!AllowTracking)
 				return;
@@ -80,76 +85,17 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			const string UserConfigFileName = "user.config";
-
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
 				// Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
 				// We really want to use the same ID if possible to keep our statistics valid.
-
-				// We need to get the company name and exe name of the main application, without introducing a dependency on
-				// Windows.Forms, so we can't use the Windows.Forms.Application methods.
-				var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
-				var productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
-				AssemblyCompanyAttribute companyAttribute = AssemblyCompanyAttribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-				if (companyAttribute != null && !string.IsNullOrEmpty(productExe))
+				try
 				{
-					string companyName = companyAttribute.Company;
-					var settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						companyName);
-					// Coincidentally, 5 is a good length for Bloom...better heuristic later?
-					// For example, we could
-					// - look for the last capital letter, and truncate to there. BloomAlpha->Bloom; HearThisAlpha->HearThis; *HearThis->Hear; TEX->?TE; TEXAlpha->TEX; BloomBetaOne->*BloomBeta
-					// - look for the first non-initial capital letter, and truncate from there on. BloomAlpha->Bloom, HearThisAlpha->*Hear; HearThis->*Hear; TEX->*T' TEXAlpha->TEX; BloomBetaOne->Bloom
-					// - look for a non-initial capital letter following at least one LC letter. Similar except TEX->TEX, TEXAlpha->*TEXAlpha.
-					// In general, truncating too much is better than too little; too much just makes us slow, while too little may make us miss useful results.
-					// It's true that truncating too much (like TEX->TE) may cause us to fetch an analytics ID from the wrong program. But even this is harmless, AFAIK.
-					var index = Math.Min(5, productExe.Length);
-					var prefix = productExe.Substring(0, index);
-					var pattern = prefix + "*";
-					var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
-					var possibleFolders = new List<string>();
-					foreach (var folder in possibleParentFolders)
-					{
-						possibleFolders.AddRange(Directory.GetDirectories(folder).Where(f => File.Exists(Path.Combine(f, UserConfigFileName))));
-					}
-
-					possibleFolders.Sort((first, second) =>
-					{
-						if (first == second)
-							return 0;
-						var firstConfigPath = Path.Combine(first, UserConfigFileName);
-						var secondConfigPath = Path.Combine(second, UserConfigFileName);
-						// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
-						// That is, we end up with the most recently modified user.config first.
-						return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
-					});
-					foreach (var folder in possibleFolders)
-					{
-						try
-						{
-							var doc = XDocument.Load(Path.Combine(folder, UserConfigFileName));
-							var idSetting =
-								doc.XPathSelectElement(
-									"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
-							if (idSetting == null)
-								continue;
-							string analyticsId = idSetting.Value;
-							if (string.IsNullOrEmpty(analyticsId))
-								continue;
-							AnalyticsSettings.Default.IdForAnalytics = analyticsId;
-							AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
-							AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
-							AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
-							AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
-							AnalyticsSettings.Default.Save();
-							break;
-						}
-						catch (Exception)
-						{
-							// If anything goes wrong we just won't try to get our ID from this source.
-						}
-					}
+					AttemptToGetUserIdSettingsPromDifferentChannel();
+				}
+				catch (Exception)
+				{
+					// Oh, well, we tried.
 				}
 			}
 
@@ -205,18 +151,164 @@ namespace DesktopAnalytics
 			else if (AnalyticsSettings.Default.LastVersionLaunched != versionNumberWithBuild)
 			{
 				TrackWithApplicationProperties("Upgrade", new Properties
-					{
-						{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
-					});
+				{
+					{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
+				});
 			}
 
-			//we want to record the launch event independent of whether we also recorded a special first launch
+			// We want to record the launch event independent of whether we also recorded a special first launch
 			// But that is done after we retrieve (or fail to retrieve) our external ip address.
 			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
 
 			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
 			AnalyticsSettings.Default.Save();
 
+		}
+
+		private void AttemptToGetUserIdSettingsPromDifferentChannel()
+		{
+			// We need to get the company name and exe name of the main application, without introducing a dependency on
+			// Windows.Forms, so we can't use the Windows.Forms.Application methods. For maximum robustness, we try two
+			// different approaches.
+			// REVIEW: The first approach will NOT work for plugins or calls from unmanaged code, but for maximum
+			// compatibility (to keep from breaking Bloom), we try it first. If it fails, we try the second approach,
+			// which should work for everyone (though until there is a plugin that supports channels, it will presumably
+			// never actually find a pre-existing config file from a different channel.
+
+			string settingsLocation;
+			string productExe;
+
+			for (int attempt = 0; attempt < 2; attempt++)
+			{
+				if (attempt == 0)
+				{
+					if (!TryGetSettingsLocationInfoFromEntryAssembly(out settingsLocation, out productExe))
+						continue;
+				}
+				else
+				{
+					if (!TryGetDefaultSettingsLocationInfo(out settingsLocation, out productExe))
+						return;
+				}
+
+				// Coincidentally, 5 is a good length for Bloom...better heuristic later?
+				// For example, we could
+				// - look for the last capital letter, and truncate to there. BloomAlpha->Bloom; HearThisAlpha->HearThis; *HearThis->Hear; TEX->?TE; TEXAlpha->TEX; BloomBetaOne->*BloomBeta
+				// - look for the first non-initial capital letter, and truncate from there on. BloomAlpha->Bloom, HearThisAlpha->*Hear; HearThis->*Hear; TEX->*T' TEXAlpha->TEX; BloomBetaOne->Bloom
+				// - look for a non-initial capital letter following at least one LC letter. Similar except TEX->TEX, TEXAlpha->*TEXAlpha.
+				// In general, truncating too much is better than too little; too much just makes us slow, while too little may make us miss useful results.
+				// It's true that truncating too much (like TEX->TE) may cause us to fetch an analytics ID from the wrong program. But even this is harmless, AFAIK.
+				var index = Math.Min(5, productExe.Length);
+				var prefix = productExe.Substring(0, index);
+				var pattern = prefix + "*";
+				var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
+				var possibleFolders = new List<string>();
+				foreach (var folder in possibleParentFolders)
+				{
+					possibleFolders.AddRange(Directory.GetDirectories(folder).Where(f => File.Exists(Path.Combine(f, kUserConfigFileName))));
+				}
+
+				possibleFolders.Sort((first, second) =>
+				{
+					if (first == second)
+						return 0;
+					var firstConfigPath = Path.Combine(first, kUserConfigFileName);
+					var secondConfigPath = Path.Combine(second, kUserConfigFileName);
+					// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
+					// That is, we end up with the most recently modified user.config first.
+					return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
+				});
+				foreach (var folder in possibleFolders)
+				{
+					try
+					{
+						var doc = XDocument.Load(Path.Combine(folder, kUserConfigFileName));
+						var idSetting =
+							doc.XPathSelectElement(
+								"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
+						string analyticsId = idSetting?.Value;
+						if (string.IsNullOrEmpty(analyticsId))
+							continue;
+						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
+						AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
+						AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
+						AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
+						AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
+						AnalyticsSettings.Default.Save();
+						return;
+					}
+					catch (Exception)
+					{
+						// If anything goes wrong we just won't try to get our ID from this source.
+					}
+				}
+			}
+		}
+
+		private bool TryGetSettingsLocationInfoFromEntryAssembly(out string settingsLocation, out string productExe)
+		{
+			settingsLocation = null;
+			productExe = null;
+
+			var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
+			if (entryAssembly == null) // Called from unmanaged code?
+				return false;
+			productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
+			AssemblyCompanyAttribute companyAttribute = Attribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
+			if (companyAttribute == null || string.IsNullOrEmpty(productExe))
+				return false;
+			string companyName = companyAttribute.Company;
+			if (companyName == null)
+				return false;
+			settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+				companyName);
+			return true;
+		}
+
+		private bool TryGetDefaultSettingsLocationInfo(out string settingsLocation, out string productExe)
+		{
+			settingsLocation = null;
+			productExe = null;
+			try
+			{
+				var userConfigPath = GetUserConfigPath();
+				if (Path.GetFileName(userConfigPath) != kUserConfigFileName)
+					return false;
+				userConfigPath = Path.GetDirectoryName(Path.GetDirectoryName(userConfigPath)); // strip file name and last folder level
+				productExe = Path.GetFileName(userConfigPath);
+				if (productExe == null)
+					return false;
+				int i = productExe.IndexOf(".exe", StringComparison.Ordinal);
+				if (i > 0)
+					productExe = productExe.Substring(0, i);
+				else
+				{
+					i = productExe.IndexOf("_StrongName_", StringComparison.Ordinal);
+					if (i > 0)
+						productExe = productExe.Substring(0, i);
+				}
+				settingsLocation = Path.GetDirectoryName(userConfigPath); // strip product folder
+
+				return true;
+			}
+			catch (Exception)
+			{
+				return false;
+			}
+		}
+
+		private string GetUserConfigPath()
+		{
+			try
+			{
+				return ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.PerUserRoamingAndLocal).FilePath;
+			}
+			catch (ConfigurationErrorsException ex)
+			{
+				// If the user.config file is corrupt then it will throw a ConfigurationErrorsException
+				// Fortunately we can still gets it path from the exception. 
+				return ex.Filename;
+			}
 		}
 
 		// If the specified setting's current value is empty, try to extract it from the document.
@@ -362,7 +454,7 @@ namespace DesktopAnalytics
 
 		/// <summary>
 		/// Sends the exception's message and stacktrace, plus additional information the
-		/// program thinks may be relevant. Limitted to MAX_EXCEPTION_REPORTS_PER_RUN
+		/// program thinks may be relevant. Limited to MAX_EXCEPTION_REPORTS_PER_RUN
 		/// </summary>
 		public static void ReportException(Exception e, Dictionary<string, string> moreProperties)
 		{
@@ -653,7 +745,8 @@ namespace DesktopAnalytics
 
 		private static string GetUserNameForEvent()
 		{
-			return _userInfo == null ? "unknown" : _userInfo.FirstName + " " + _userInfo.LastName;
+			return _userInfo == null ? "unknown" :
+				(String.IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
 		}
 		#endregion
 	}
