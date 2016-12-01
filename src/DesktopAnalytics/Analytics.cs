@@ -173,7 +173,7 @@ namespace DesktopAnalytics
 			// REVIEW: The first approach will NOT work for plugins or calls from unmanaged code, but for maximum
 			// compatibility (to keep from breaking Bloom), we try it first. If it fails, we try the second approach,
 			// which should work for everyone (though until there is a plugin that supports channels, it will presumably
-			// never actually find a pre-existing config file from a different channel.
+			// never actually find a pre-existing config file from a different channel).
 
 			string settingsLocation;
 			string productExe;
