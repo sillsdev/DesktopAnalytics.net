@@ -174,18 +174,18 @@ namespace DesktopAnalytics
 			// never actually find a pre-existing config file from a different channel).
 
 			string settingsLocation;
-			string productExe;
+			string softwareName;
 
 			for (int attempt = 0; attempt < 2; attempt++)
 			{
 				if (attempt == 0)
 				{
-					if (!TryGetSettingsLocationInfoFromEntryAssembly(out settingsLocation, out productExe))
+					if (!TryGetSettingsLocationInfoFromEntryAssembly(out settingsLocation, out softwareName))
 						continue;
 				}
 				else
 				{
-					if (!TryGetDefaultSettingsLocationInfo(out settingsLocation, out productExe))
+					if (!TryGetDefaultSettingsLocationInfo(out settingsLocation, out softwareName))
 						return;
 				}
 
@@ -196,8 +196,8 @@ namespace DesktopAnalytics
 				// - look for a non-initial capital letter following at least one LC letter. Similar except TEX->TEX, TEXAlpha->*TEXAlpha.
 				// In general, truncating too much is better than too little; too much just makes us slow, while too little may make us miss useful results.
 				// It's true that truncating too much (like TEX->TE) may cause us to fetch an analytics ID from the wrong program. But even this is harmless, AFAIK.
-				var index = Math.Min(5, productExe.Length);
-				var prefix = productExe.Substring(0, index);
+				var index = Math.Min(5, softwareName.Length);
+				var prefix = softwareName.Substring(0, index);
 				var pattern = prefix + "*";
 				var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
 				var possibleFolders = new List<string>();
@@ -243,17 +243,17 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private bool TryGetSettingsLocationInfoFromEntryAssembly(out string settingsLocation, out string productExe)
+		private bool TryGetSettingsLocationInfoFromEntryAssembly(out string settingsLocation, out string softwareName)
 		{
 			settingsLocation = null;
-			productExe = null;
+			softwareName = null;
 
 			var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
 			if (entryAssembly == null) // Called from unmanaged code?
 				return false;
-			productExe = Path.GetFileNameWithoutExtension(entryAssembly.Location);
+			softwareName = Path.GetFileNameWithoutExtension(entryAssembly.Location);
 			AssemblyCompanyAttribute companyAttribute = Attribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-			if (companyAttribute == null || string.IsNullOrEmpty(productExe))
+			if (companyAttribute == null || string.IsNullOrEmpty(softwareName))
 				return false;
 			string companyName = companyAttribute.Company;
 			if (companyName == null)
@@ -263,27 +263,27 @@ namespace DesktopAnalytics
 			return true;
 		}
 
-		private bool TryGetDefaultSettingsLocationInfo(out string settingsLocation, out string productExe)
+		private bool TryGetDefaultSettingsLocationInfo(out string settingsLocation, out string softwareName)
 		{
 			settingsLocation = null;
-			productExe = null;
+			softwareName = null;
 			try
 			{
 				var userConfigPath = GetUserConfigPath();
 				if (Path.GetFileName(userConfigPath) != kUserConfigFileName)
 					return false;
 				userConfigPath = Path.GetDirectoryName(Path.GetDirectoryName(userConfigPath)); // strip file name and last folder level
-				productExe = Path.GetFileName(userConfigPath);
-				if (productExe == null)
+				softwareName = Path.GetFileName(userConfigPath); // This is actually a folder, not a file.
+				if (softwareName == null)
 					return false;
-				int i = productExe.IndexOf(".exe", StringComparison.Ordinal);
+				int i = softwareName.IndexOf(".exe", StringComparison.Ordinal);
 				if (i > 0)
-					productExe = productExe.Substring(0, i);
+					softwareName = softwareName.Substring(0, i);
 				else
 				{
-					i = productExe.IndexOf("_StrongName_", StringComparison.Ordinal);
+					i = softwareName.IndexOf("_StrongName_", StringComparison.Ordinal);
 					if (i > 0)
-						productExe = productExe.Substring(0, i);
+						softwareName = softwareName.Substring(0, i);
 				}
 				settingsLocation = Path.GetDirectoryName(userConfigPath); // strip product folder
 
