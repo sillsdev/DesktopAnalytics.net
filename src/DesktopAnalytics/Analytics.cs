@@ -54,8 +54,6 @@ namespace DesktopAnalytics
 		/// <param name="userInfo">Information about the user that you have previous collected</param>
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
-		/// <param name="companyName">If non-null, this will be used (if needed) to locate existing config
-		/// files from previous versions</param>
 		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true)
 		{
 			if (_singleton != null)
@@ -91,7 +89,7 @@ namespace DesktopAnalytics
 				// We really want to use the same ID if possible to keep our statistics valid.
 				try
 				{
-					AttemptToGetUserIdSettingsPromDifferentChannel();
+					AttemptToGetUserIdSettingsFromDifferentChannel();
 				}
 				catch (Exception)
 				{
@@ -165,7 +163,7 @@ namespace DesktopAnalytics
 
 		}
 
-		private void AttemptToGetUserIdSettingsPromDifferentChannel()
+		private void AttemptToGetUserIdSettingsFromDifferentChannel()
 		{
 			// We need to get the company name and exe name of the main application, without introducing a dependency on
 			// Windows.Forms, so we can't use the Windows.Forms.Application methods. For maximum robustness, we try two
