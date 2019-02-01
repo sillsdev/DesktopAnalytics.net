@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -372,6 +373,8 @@ namespace DesktopAnalytics
 					Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
 					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 					{
+						var launchProperties = new Properties {{"installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName}};
+
 						try
 						{
 							var externalIpAddress = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
@@ -383,11 +386,11 @@ namespace DesktopAnalytics
 						{
 							// we get here when the user isn't online, or anything else prevents us from
 							// getting their ip. Still worth reporting the launch in the later case.
-							TrackWithApplicationProperties("Launch");
+							TrackWithApplicationProperties("Launch", launchProperties);
 							return;
 						}
 						UpdateSegmentIOInformationOnThisUser();
-						TrackWithApplicationProperties("Launch");
+						TrackWithApplicationProperties("Launch", launchProperties);
 					};
 					client.DownloadDataAsync(uri);
 
