@@ -10,6 +10,7 @@ using System.Net;
 using System.Reflection;
 using System.Xml.Linq;
 using System.Xml.XPath;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Segment.Model;
 
@@ -41,8 +42,8 @@ namespace DesktopAnalytics
 		private static int _exceptionCount = 0;
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii)
 		{
 
 		}
@@ -54,7 +55,9 @@ namespace DesktopAnalytics
 		/// <param name="userInfo">Information about the user that you have previous collected</param>
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true)
+		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
+		/// personally identifiable information to the analytics server.</param>
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false)
 		{
 			if (_singleton != null)
 			{
@@ -63,16 +66,34 @@ namespace DesktopAnalytics
 			_singleton = this;
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-			_userInfo = userInfo;
+			if (retainPii)
+				_userInfo = userInfo;
+			else
+			{
+				var firstName = userInfo.FirstName;
+				if (!String.IsNullOrWhiteSpace(firstName))
+					firstName = firstName[0].ToString() + firstName.GetHashCode();
+				var lastName = userInfo.LastName;
+				if (!String.IsNullOrWhiteSpace(lastName))
+					lastName = lastName[0].ToString() + lastName.GetHashCode();
+				var emailDomain = userInfo.Email;
+				if (emailDomain != null)
+				{
+					var charactersToStrip = emailDomain.IndexOf("@", StringComparison.Ordinal);
+					if (charactersToStrip > 0)
+						emailDomain = emailDomain.Substring(charactersToStrip);
+				}
+				_userInfo = new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain, OtherProperties = userInfo.OtherProperties };
+			}
 
 			AllowTracking = allowTracking;
-			//UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
+
+			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
 			if (string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
-				UrlThatReturnsExternalIpAddress = "http://icanhazip.com"; //went down: "http://ipecho.net/plain";
+				UrlThatReturnsGeolocationJson = "http://ip-api.com/json/";
 
 			if (!AllowTracking)
 				return;
-
 
 			//bring in settings from any previous version
 			if (AnalyticsSettings.Default.NeedUpgrade)
@@ -357,10 +378,18 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Override this for any reason you like, including if the built-in one (http://ipecho.net/plain) stops working some day.
-		/// The service should simply return a page with a body containing the ip address alone.
+		/// Override this if you want your analytics to report an actual IP address to the server (which could be considered PII), rather than
+		/// just the general geolocation info. The service should simply return a page with a body containing the ip address alone.
 		/// </summary>
+		/// <remarks>This used to default to "http://icanhazip.com"; //formerly: "http://ipecho.net/plain" (that URL went down, but is now back up)</remarks>
 		public static string UrlThatReturnsExternalIpAddress { get; set; }
+		/// <summary>
+		/// Override this for any reason you like, including if the built-in one ( http://ip-api.com/json/) stops working some day.
+		/// This will be ignored if <seealso cref="UrlThatReturnsExternalIpAddress"/> is set.
+		/// The service should return json that contains values for one or more of the following names: city, country, countryCode,
+		/// region, regionName.
+		/// </summary>
+		public static string UrlThatReturnsGeolocationJson { get; set; }
 
 		private void ReportIpAddressOfThisMachineAsync()
 		{
@@ -369,20 +398,32 @@ namespace DesktopAnalytics
 				try
 				{
 					Uri uri;
-					Uri.TryCreate(UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
+					bool json = string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
+					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
 					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 					{
 						try
 						{
-							var externalIpAddress = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
-							Debug.WriteLine(String.Format("DesktopAnalytics: external ip = {0}", externalIpAddress));
-							_options.Context.Add("ip", externalIpAddress);
-							_propertiesThatGoWithEveryEvent.Add("ip", externalIpAddress);
+							var result = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
+							if (json)
+							{
+								Debug.WriteLine(String.Format("DesktopAnalytics: geolocation JSON data = {0}", result));
+								var j = new JTokenReader(JToken.Parse(result));
+								AddGeolocationProperty(j, "city");
+								AddGeolocationProperty(j, "country", "countryCode");
+								AddGeolocationProperty(j, "regionName", "region");
+							}
+							else
+							{
+								Debug.WriteLine(String.Format("DesktopAnalytics: external ip = {0}", result));
+								_options.Context.Add("ip", result);
+								_propertiesThatGoWithEveryEvent.Add("ip", result);
+							}
 						}
 						catch (Exception)
 						{
 							// we get here when the user isn't online, or anything else prevents us from
-							// getting their ip. Still worth reporting the launch in the later case.
+							// getting their ip. Still worth reporting the launch in the latter case.
 							TrackWithApplicationProperties("Launch");
 							return;
 						}
@@ -397,6 +438,18 @@ namespace DesktopAnalytics
 					return;
 				}
 			}
+		}
+
+		private bool AddGeolocationProperty(JTokenReader j, string primary, string secondary = null)
+		{
+			var value = j.CurrentToken.SelectToken(primary, false)?.Values<string>().FirstOrDefault();
+			if (!String.IsNullOrWhiteSpace(value))
+			{
+				_options.Context.Add(primary, value);
+				_propertiesThatGoWithEveryEvent.Add(primary, value);
+				return true;
+			}
+			return (secondary != null) && AddGeolocationProperty(j, secondary);
 		}
 
 		private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()

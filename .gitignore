@@ -13,3 +13,4 @@ output/
 /*.nupkg
 Publish Example.txt
 ReadMe.html
+/.vs/**
