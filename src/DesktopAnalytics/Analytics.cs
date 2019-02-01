@@ -546,7 +546,6 @@ namespace DesktopAnalytics
 				prop.Add(key, properties[key]);
 			}
 			return prop;
-			return prop;
 		}
 
 
