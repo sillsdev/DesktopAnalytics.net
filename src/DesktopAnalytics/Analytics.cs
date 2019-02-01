@@ -224,7 +224,9 @@ namespace DesktopAnalytics
 						var idSetting =
 							doc.XPathSelectElement(
 								"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
-						string analyticsId = idSetting?.Value;
+						if (idSetting == null)
+							continue;
+						string analyticsId = idSetting.Value;
 						if (string.IsNullOrEmpty(analyticsId))
 							continue;
 						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
@@ -304,7 +306,7 @@ namespace DesktopAnalytics
 			catch (ConfigurationErrorsException ex)
 			{
 				// If the user.config file is corrupt then it will throw a ConfigurationErrorsException
-				// Fortunately we can still gets it path from the exception. 
+				// Fortunately we can still gets it path from the exception.
 				return ex.Filename;
 			}
 		}
@@ -508,7 +510,15 @@ namespace DesktopAnalytics
 		public void Dispose()
 		{
 			if (Segment.Analytics.Client != null)
+			{
+				// BL-5276 indicated that some events shortly before program termination were not being sent.
+				// The documentation is ambiguous about whether Flush() needs to be called before Dispose(),
+				// but source code at https://github.com/segmentio/Analytics.NET/blob/master/Analytics/Client.cs
+				// clearly says "Note, this does not call Flush() first".
+				// So to be sure of getting all our events we should call it.
+				Segment.Analytics.Client.Flush();
 				Segment.Analytics.Client.Dispose();
+			}
 		}
 
 		/// <summary>
