@@ -78,6 +78,7 @@
     </Compile>
     <Compile Include="Analytics.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UserInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="AnalyticsSettings.settings">

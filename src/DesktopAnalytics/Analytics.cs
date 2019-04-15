@@ -67,25 +67,7 @@ namespace DesktopAnalytics
 			_singleton = this;
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-			if (retainPii)
-				_userInfo = userInfo;
-			else
-			{
-				var firstName = userInfo.FirstName;
-				if (!String.IsNullOrWhiteSpace(firstName))
-					firstName = firstName[0].ToString() + firstName.GetHashCode();
-				var lastName = userInfo.LastName;
-				if (!String.IsNullOrWhiteSpace(lastName))
-					lastName = lastName[0].ToString() + lastName.GetHashCode();
-				var emailDomain = userInfo.Email;
-				if (emailDomain != null)
-				{
-					var charactersToStrip = emailDomain.IndexOf("@", StringComparison.Ordinal);
-					if (charactersToStrip > 0)
-						emailDomain = emailDomain.Substring(charactersToStrip);
-				}
-				_userInfo = new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain, OtherProperties = userInfo.OtherProperties };
-			}
+			_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
 
 			AllowTracking = allowTracking;
 
@@ -182,7 +164,6 @@ namespace DesktopAnalytics
 
 			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
 			AnalyticsSettings.Default.Save();
-
 		}
 
 		private void AttemptToGetUserIdSettingsFromDifferentChannel()
@@ -425,8 +406,8 @@ namespace DesktopAnalytics
 						}
 						catch (Exception)
 						{
-							// we get here when the user isn't online, or anything else prevents us from
-							// getting their ip. Still worth reporting the launch in the latter case.
+							// We get here when the user isn't online, or anything else prevents us from getting
+							// their IP address or location. Still worth reporting the launch in the latter case.
 							TrackWithApplicationProperties("Launch", launchProperties);
 							return;
 						}
@@ -812,20 +793,5 @@ namespace DesktopAnalytics
 				(String.IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
 		}
 		#endregion
-	}
-
-	/// <summary>
-	/// Used to send id information to analytics; the most natural way to use this is to load
-	/// it from your Settings.Default each time you run, even if you don't know these things
-	/// yet because the user hasn't registered yet. Then even if they register while offline,
-	/// eventually this informatino will be sent when they *are* online.
-	/// </summary>
-	public class UserInfo
-	{
-		public string FirstName = "";
-		public string LastName = "";
-		public string Email = "";
-		public string UILanguageCode = "";
-		public Dictionary<string, string> OtherProperties = new Dictionary<string, string>();
 	}
 }
