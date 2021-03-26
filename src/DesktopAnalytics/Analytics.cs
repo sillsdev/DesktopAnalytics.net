@@ -9,6 +9,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.Remoting.Contexts;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using Newtonsoft.Json;
@@ -589,26 +591,90 @@ namespace DesktopAnalytics
 		{
 			if (Environment.OSVersion.Platform == PlatformID.Unix)
 			{
-				if (UnixName == "Linux")
-					return String.Format("{0} / {1}", LinuxVersion, LinuxDesktop);
-				else
-					return UnixName;    // Maybe "Darwin" for a Mac?
+				return UnixName == "Linux" ? String.Format("{0} / {1}", LinuxVersion, LinuxDesktop) : UnixName;
 			}
 			var list = new List<Version>();
 			list.Add(new Version(System.PlatformID.Win32NT, 5, 0, "Windows 2000"));
 			list.Add(new Version(System.PlatformID.Win32NT, 5, 1, "Windows XP"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 0, "Vista"));
 			list.Add(new Version(System.PlatformID.Win32NT, 6, 1, "Windows 7"));
-			list.Add(new Version(System.PlatformID.Win32NT, 6, 2, "Windows 8"));
-			list.Add(new Version(System.PlatformID.Win32NT, 6, 3, "Windows 8.1"));
-			list.Add(new Version(System.PlatformID.Win32NT, 10, 0, "Windows 10"));
+			// After Windows 8 the Environment.OSVersion started misreporting information unless
+			// your app has a manifest which says it supports the OS it is running on.  This is not
+			// helpful if someone starts using an app built before the OS is released. Anything that
+			// reports its self as Windows 8 is suspect, and must get the version info another way.
+			list.Add(new Version(PlatformID.Win32NT, 6, 3, "Windows 8.1"));
+			list.Add(new Version(PlatformID.Win32NT, 10, 0, "Windows 10"));
+
 			foreach (var version in list)
 			{
-				if (version.Match(System.Environment.OSVersion))
-					return version.Label;// +" " + Environment.OSVersion.ServicePack;
+				if (version.Match(Environment.OSVersion))
+					return version.Label + " " + Environment.OSVersion.ServicePack;
 			}
-			return System.Environment.OSVersion.VersionString;
+
+			// Handle any as yet unrecognized (possibly unmanifested) versions, or anything that reported its self as Windows 8.
+			if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+			{
+				return GetWindowsVersionInfoFromNetworkAPI() + " " + Environment.OSVersion.ServicePack;
+			}
+
+			return Environment.OSVersion.VersionString;
 		}
+
+		#region Windows8PlusVersionReportingSupport
+		[DllImport("netapi32.dll", CharSet = CharSet.Auto)]
+		static extern int NetWkstaGetInfo(string server,
+			int level,
+			out IntPtr info);
+
+		[DllImport("netapi32.dll")]
+		static extern int NetApiBufferFree(IntPtr pBuf);
+
+		[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+		struct MachineInfo
+		{
+			public int platform_id;
+			[MarshalAs(UnmanagedType.LPWStr)]
+			public string _computerName;
+			[MarshalAs(UnmanagedType.LPWStr)]
+			public string _languageGroup;
+			public int _majorVersion;
+			public int _minorVersion;
+		}
+
+		/// <summary>
+		/// An application can avoid the need of this method by adding/modifying the application manifest to declare support for a
+		/// particular windows version. This code is still necessary to report usefully about versions of windows released after
+		/// the application has shipped.
+		/// </summary>
+		public static string GetWindowsVersionInfoFromNetworkAPI()
+		{
+			IntPtr pBuffer;
+			// Get the version information from the network api, passing null to get network info from this machine
+			var retval = NetWkstaGetInfo(null, 100, out pBuffer);
+			if (retval != 0)
+				return "Windows Unknown(unidentifiable)";
+
+			var info = (MachineInfo)Marshal.PtrToStructure(pBuffer, typeof(MachineInfo));
+			string windowsVersion = null;
+			if (info._majorVersion == 6)
+			{
+				if (info._minorVersion == 2)
+					windowsVersion = "Windows 8";
+				else if (info._minorVersion == 3)
+					windowsVersion = "Windows 8.1";
+			}
+			else if (info._majorVersion == 10 && info._minorVersion == 0)
+			{
+				windowsVersion = "Windows 10";
+			}
+			else
+			{
+				windowsVersion = string.Format("Windows Unknown({0}.{1})", info._majorVersion, info._minorVersion);
+			}
+			NetApiBufferFree(pBuffer);
+			return windowsVersion;
+		}
+		#endregion
 
 		[System.Runtime.InteropServices.DllImport("libc")]
 		static extern int uname(IntPtr buf);
