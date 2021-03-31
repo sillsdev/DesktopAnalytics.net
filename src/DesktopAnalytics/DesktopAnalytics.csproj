@@ -1,105 +1,44 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
-  <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{BECACF91-9A84-4667-B678-44ACA350D413}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>DesktopAnalytics</RootNamespace>
-    <AssemblyName>DesktopAnalytics</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <TargetFrameworkProfile>Client</TargetFrameworkProfile>
-    <SolutionDir Condition="$(SolutionDir) == '' Or $(SolutionDir) == '*Undefined*'">..\..\</SolutionDir>
-    <RestorePackages>true</RestorePackages>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>..\..\output\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <DocumentationFile>..\..\output\Debug\DesktopAnalytics.XML</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\output\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <DocumentationFile>..\..\output\Release\DesktopAnalytics.XML</DocumentationFile>
-    <LangVersion>5</LangVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x86'">
-    <DebugSymbols>true</DebugSymbols>
-    <OutputPath>..\..\output\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <DebugType>full</DebugType>
-    <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
-    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x86'">
-    <OutputPath>..\..\output\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <Optimize>true</Optimize>
-    <DebugType>pdbonly</DebugType>
-    <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
-    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
-  </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="Newtonsoft.Json, Version=7.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Newtonsoft.Json.7.0.1\lib\net40\Newtonsoft.Json.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.configuration" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Xml" />
-    <Reference Include="Analytics.NET">
-      <HintPath>..\..\packages\Analytics.2.0.0\lib\Analytics.NET.dll</HintPath>
-    </Reference>
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup>
+	<TargetFramework>net461</TargetFramework>
+	<PackageId>DesktopAnalytics</PackageId>
+	<Authors>John Hatton, Stephen McConnel, Tom Bogle, Eberhard Beilharz, John Thomson, Andrew Polk, Jason Naylor</Authors>
+	<Company>SIL International</Company>
+	<PackageLicenseExpression>MIT</PackageLicenseExpression>
+	<PackageProjectUrl>https://github.com/sillsdev/desktopanalytics.net</PackageProjectUrl>
+	<RepositoryUrl>https://github.com/sillsdev/desktopanalytics.net</RepositoryUrl>
+</PropertyGroup>
+<ItemGroup>
+  <PackageReference Include="Analytics" Version="3.6.0" />
+  <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+  <PackageReference Include="GitVersion.MsBuild" Version="5.6.7">
+    <PrivateAssets>all</PrivateAssets>
+    <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+  </PackageReference>
+</ItemGroup>
+<ItemGroup>
+  <Reference Include="System.Configuration" />
+</ItemGroup>
+<ItemGroup>
+  <Compile Update="AnalyticsSettings.Designer.cs">
+    <DesignTime>True</DesignTime>
+    <AutoGen>True</AutoGen>
+    <DependentUpon>AnalyticsSettings.settings</DependentUpon>
+  </Compile>
+</ItemGroup>
+<ItemGroup>
+  <None Update="AnalyticsSettings.settings">
+    <Generator>SettingsSingleFileGenerator</Generator>
+    <LastGenOutput>AnalyticsSettings.Designer.cs</LastGenOutput>
+  </None>
+</ItemGroup>
+<ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+    <_Parameter1>DesktopAnalyticsTests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="AnalyticsSettings1.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-      <DependentUpon>AnalyticsSettings.settings</DependentUpon>
-    </Compile>
-    <Compile Include="Analytics.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="UserInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="AnalyticsSettings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>AnalyticsSettings1.Designer.cs</LastGenOutput>
-    </None>
-    <None Include="app.config" />
-    <None Include="packages.config">
-      <SubType>Designer</SubType>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <WCFMetadata Include="Service References\" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="$(SolutionDir)\.nuget\NuGet.targets" Condition="Exists('$(SolutionDir)\.nuget\NuGet.targets')" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
-       Other similar extension points exist, see Microsoft.Common.targets.
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
-  -->
+<ItemGroup>
+  <Folder Include="Properties\" />
+</ItemGroup>
 </Project>
