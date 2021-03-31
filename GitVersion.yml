@@ -1,0 +1,14 @@
+mode: Mainline
+next-version: 1.2.5
+increment: Patch
+assembly-versioning-scheme: MajorMinorPatchTag
+branches:
+  master:
+    tag:
+    regex: (origin/)?master
+    is-mainline: true
+  pull-request:
+    mode: ContinuousDeployment
+    tag: PR
+ignore:
+  sha: []

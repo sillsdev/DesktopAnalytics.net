@@ -114,7 +114,7 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			var context = new Context();
+			var context = new Segment.Model.Context();
 			context.Add("language", _userInfo.UILanguageCode);
 
 			_options = new Options();
@@ -386,7 +386,7 @@ namespace DesktopAnalytics
 					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
 					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 					{
-						var launchProperties = new Properties {{"installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName}};
+						var launchProperties = new Properties { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
 
 						try
 						{
@@ -394,7 +394,7 @@ namespace DesktopAnalytics
 							if (json)
 							{
 								Debug.WriteLine(String.Format("DesktopAnalytics: geolocation JSON data = {0}", result));
-								var j = new JTokenReader(JToken.Parse(result));
+								var j = JObject.Parse(result);
 								AddGeolocationProperty(j, "city");
 								AddGeolocationProperty(j, "country", "countryCode");
 								AddGeolocationProperty(j, "regionName", "region");
@@ -426,10 +426,10 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private bool AddGeolocationProperty(JTokenReader j, string primary, string secondary = null)
+		private bool AddGeolocationProperty(JObject j, string primary, string secondary = null)
 		{
-			var value = j.CurrentToken.SelectToken(primary, false)?.Values<string>().FirstOrDefault();
-			if (!String.IsNullOrWhiteSpace(value))
+			var value = j.GetValue(primary).ToString();
+			if (!string.IsNullOrWhiteSpace(value))
 			{
 				_options.Context.Add(primary, value);
 				_propertiesThatGoWithEveryEvent.Add(primary, value);
