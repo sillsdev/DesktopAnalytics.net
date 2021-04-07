@@ -7,7 +7,7 @@ namespace DesktopAnalytics
 	/// Used to send id information to analytics; the most natural way to use this is to load
 	/// it from your Settings.Default each time you run, even if you don't know these things
 	/// yet because the user hasn't registered yet. Then even if they register while offline,
-	/// eventually this informatino will be sent when they *are* online.
+	/// eventually this information will be sent when they *are* online.
 	/// </summary>
 	public class UserInfo
 	{

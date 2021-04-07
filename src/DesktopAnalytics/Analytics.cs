@@ -144,9 +144,11 @@ namespace DesktopAnalytics
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
 			SetApplicationProperty("Browser", GetOperatingSystemLabel());
+			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
+			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
 
 
-			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
+            if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.

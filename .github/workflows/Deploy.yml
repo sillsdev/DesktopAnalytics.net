@@ -1,0 +1,25 @@
+name: Publish To Nuget.org on pushed version tag
+on:
+  push:
+    tags:
+    - 'v*'
+jobs:
+  publish:
+    name: build, pack & publish
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.3.4
+      with:
+        fetch-depth: 0
+
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@77a48bbb85cd3809790223e895ba4b6cbc110fe8
+      with:
+        dotnet-version: 5.0.x
+
+    - name: build, test, & pack
+      run: dotnet pack -o .
+
+    - name: Push to Nuget
+      run: dotnet nuget push SIL.DesktopAnalytics.*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
