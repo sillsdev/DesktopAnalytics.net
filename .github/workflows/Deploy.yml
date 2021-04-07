@@ -18,6 +18,9 @@ jobs:
       with:
         dotnet-version: 5.0.x
 
+    - name: Clean Nuget (setup-dotnet bug workaround)
+      run: dotnet nuget locals all --clear
+
     - name: build, test, & pack
       run: dotnet pack -o .
 
