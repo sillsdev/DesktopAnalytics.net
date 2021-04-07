@@ -2,12 +2,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup>
 	<TargetFramework>net461</TargetFramework>
-	<PackageId>DesktopAnalytics</PackageId>
+	<PackageId>SIL.DesktopAnalytics</PackageId>
 	<Authors>John Hatton, Stephen McConnel, Tom Bogle, Eberhard Beilharz, John Thomson, Andrew Polk, Jason Naylor</Authors>
 	<Company>SIL International</Company>
 	<PackageLicenseExpression>MIT</PackageLicenseExpression>
 	<PackageProjectUrl>https://github.com/sillsdev/desktopanalytics.net</PackageProjectUrl>
 	<RepositoryUrl>https://github.com/sillsdev/desktopanalytics.net</RepositoryUrl>
+	<Description>Wrapper around segment.com's Analytics.net specifically for desktop apps (instead of servers).</Description>
 </PropertyGroup>
 <ItemGroup>
   <PackageReference Include="Analytics" Version="3.6.0" />
