@@ -1,5 +1,4 @@
 mode: Mainline
-next-version: 1.2.5
 increment: Patch
 assembly-versioning-scheme: MajorMinorPatchTag
 branches:

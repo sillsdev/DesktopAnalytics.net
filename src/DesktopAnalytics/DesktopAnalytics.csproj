@@ -10,6 +10,13 @@
 	<RepositoryUrl>https://github.com/sillsdev/desktopanalytics.net</RepositoryUrl>
 	<Description>Wrapper around segment.com's Analytics.net specifically for desktop apps (instead of servers).</Description>
 </PropertyGroup>
+<PropertyGroup>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+</PropertyGroup>
+<ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0" PrivateAssets="All" />
+</ItemGroup>
 <ItemGroup>
   <PackageReference Include="Analytics" Version="3.6.0" />
   <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />

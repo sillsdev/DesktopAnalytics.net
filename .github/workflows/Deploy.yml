@@ -14,7 +14,7 @@ jobs:
         fetch-depth: 0
 
     - name: Install .NET Core
-      uses: actions/setup-dotnet@77a48bbb85cd3809790223e895ba4b6cbc110fe8
+      uses: actions/setup-dotnet@v1
       with:
         dotnet-version: 5.0.x
 
@@ -22,4 +22,6 @@ jobs:
       run: dotnet pack -o .
 
     - name: Push to Nuget
-      run: dotnet nuget push SIL.DesktopAnalytics.*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
+      run: |
+        dotnet nuget push SIL.DesktopAnalytics.*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
+        dotnet nuget push SIL.DesktopAnalytics.*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
