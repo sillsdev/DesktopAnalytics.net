@@ -23,3 +23,4 @@ jobs:
 
     - name: Push to Nuget
       run: dotnet nuget push SIL.DesktopAnalytics.*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
+      run: dotnet nuget push SIL.DesktopAnalytics.*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.PUBLISH_TO_NUGET_ORG}} --skip-duplicate
