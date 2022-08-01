@@ -1,6 +1,8 @@
 name: Publish To Nuget.org on pushed version tag
 on:
   push:
+    branches:
+    - master
     tags:
     - 'v*'
 jobs:
@@ -20,6 +22,11 @@ jobs:
 
     - name: build, test, & pack
       run: dotnet pack -o .
+      # When triggered on a tag push a GITHUB_REF env variable is set that confuses
+      # GitVersion and gives us versions that look like v2.0.0-tags-v2-0-0.1
+      # If we set GITHUB_REF to refs/heads/master will make it behave as expected
+      env:
+        GITHUB_REF: refs/heads/master
 
     - name: Push to Nuget
       run: |

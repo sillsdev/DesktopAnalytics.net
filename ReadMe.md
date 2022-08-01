@@ -102,6 +102,10 @@ If you've also got LibPalaso in your app, hook up its ExceptionHandler like this
 
 The project is currently built for .net 4 client profile. If you get the solution, nuget should auto-restore the two dependencies when you build; they are not part of the source tree.
 
+## Publishing
+
+When changes are merged to master a github action will run dotnet pack and publish to Nuget. The publishing task can also be triggered by pushing a tag to the master branch.
+
 ## License
 
 MIT Licensed
