@@ -1,5 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
-using DesktopAnalytics;
+using System.Windows.Forms;
 
 namespace SampleAppWithForm
 {

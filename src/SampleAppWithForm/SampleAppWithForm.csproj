@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net461</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+  <Description>SampleAppWithForm</Description>
+  <Company>SIL International</Company>
+  <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Analytics" Version="3.8.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+  <ProjectReference Include="..\DesktopAnalytics\DesktopAnalytics.csproj">
+    <Project>{BECACF91-9A84-4667-B678-44ACA350D413}</Project>
+    <Name>DesktopAnalytics</Name>
+  </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+	<Reference Include="System" />
+	<Reference Include="System.Core" />
+	<Reference Include="System.Xml.Linq" />
+	<Reference Include="System.Data.DataSetExtensions" />
+	<Reference Include="Microsoft.CSharp" />
+	<Reference Include="System.Data" />
+	<Reference Include="System.Xml" />
+  </ItemGroup>
+
+</Project>
