@@ -573,6 +573,7 @@ namespace DesktopAnalytics
 				// clearly says "Note, this does not call Flush() first".
 				// So to be sure of getting all our events we should call it. Unfortunately, if Flush is called
 				// in response to the main application window closing, it can cause deadlock, and the app hangs.
+				// https://github.com/segmentio/Analytics.NET/issues/200
 				// So instead of calling Flush, if there are events in the queue, we just wait a little while.
 				// The default timeout on the client is 5 seconds, so probably we should never need to wait
 				// longer than that.
@@ -582,6 +583,12 @@ namespace DesktopAnalytics
 				{
 					if (totalWait > 7500)
 						break;
+					// This might seem like a long time to wait, but
+					// a) it will only have to do this is there are unsent events in the queue
+					// b) trying to wait less time doesn't seem to make it go any faster. (I did
+					//    try to cut the timeout time way down in hopes that that would cause
+					//    Segment to process the queue immediately, but it seemed to have no
+					//    effect.)
 					totalWait += 2500;
 					Thread.Sleep(2500);
 				}
@@ -630,10 +637,10 @@ namespace DesktopAnalytics
 				new Version(PlatformID.Win32NT, 5, 1, "Windows XP"),
 				new Version(PlatformID.Win32NT, 6, 0, "Vista"),
 				new Version(PlatformID.Win32NT, 6, 1, "Windows 7"),
-				// reports its self as Windows 8 is suspect, and must get the version info another way.
-				// helpful if someone starts using an app built before the OS is released. Anything that
-				// your app has a manifest which says it supports the OS it is running on.  This is not
 				// After Windows 8 the Environment.OSVersion started misreporting information unless
+				// your app has a manifest which says it supports the OS it is running on. This is not
+				// helpful if someone starts using an app built before the OS is released. Anything that
+				// reports itself as Windows 8 is suspect, and must get the version info another way.
 				new Version(PlatformID.Win32NT, 6, 3, "Windows 8.1"),
 				new Version(PlatformID.Win32NT, 10, 0, "Windows 10")
 			};

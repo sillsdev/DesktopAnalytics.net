@@ -30,7 +30,8 @@ namespace SampleAppWithForm
 			Debug.WriteLine($"Succeeded: {Segment.Analytics.Client.Statistics.Succeeded}; " +
 				$"Submitted: {Segment.Analytics.Client.Statistics.Submitted}; " +
 				$"Failed:  {Segment.Analytics.Client.Statistics.Failed}");
-			// This allows us to illustrate the deadlock problem.
+			// This allows us to illustrate the deadlock problem:
+			// https://github.com/segmentio/Analytics.NET/issues/200
 			if (_chkFlush.Checked) 
 				Segment.Analytics.Client.Flush();
 			Program.s_analyticsSingleton?.Dispose();
