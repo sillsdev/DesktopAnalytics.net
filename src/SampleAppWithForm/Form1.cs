@@ -34,7 +34,10 @@ namespace SampleAppWithForm
 			// https://github.com/segmentio/Analytics.NET/issues/200
 			if (_chkFlush.Checked) 
 				Segment.Analytics.Client.Flush();
+			var stopwatch = Stopwatch.StartNew();
 			Program.s_analyticsSingleton?.Dispose();
+			stopwatch.Stop();
+			Debug.WriteLine($"Total wait = {stopwatch.Elapsed}");
 		}
 	}
 }

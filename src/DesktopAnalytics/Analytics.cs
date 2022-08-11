@@ -589,8 +589,8 @@ namespace DesktopAnalytics
 					//    try to cut the timeout time way down in hopes that that would cause
 					//    Segment to process the queue immediately, but it seemed to have no
 					//    effect.)
-					totalWait += 2500;
-					Thread.Sleep(2500);
+					totalWait += 500;
+					Thread.Sleep(500);
 				}
 				//Segment.Analytics.Client.Flush();
 				Segment.Analytics.Client.Dispose();
