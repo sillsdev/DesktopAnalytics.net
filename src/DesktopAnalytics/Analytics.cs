@@ -10,10 +10,10 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Runtime.Remoting.Contexts;
+using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
-using Newtonsoft.Json;
+using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
 using Segment.Model;
 
@@ -41,8 +41,9 @@ namespace DesktopAnalytics
 		private static Traits _traits;
 		private static UserInfo _userInfo;
 		private static Analytics _singleton;
-		private Dictionary<string, string> _propertiesThatGoWithEveryEvent;
+		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int _exceptionCount = 0;
+
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false)
@@ -104,6 +105,11 @@ namespace DesktopAnalytics
 			}
 
 			Segment.Analytics.Initialize(apiSecret);
+			// All these were attempts to prevent deadlock when calling Flush in response to
+			// the main window closing
+			//Segment.Analytics.Client.Config.SetTimeout(TimeSpan.FromMilliseconds(5000));
+			//Segment.Analytics.Client.Config.SetMaxRetryTime(TimeSpan.FromMilliseconds(7500));
+			//Segment.Analytics.Client.Config.SetThreads(2);
 			Segment.Analytics.Client.Failed += Client_Failed;
 			Segment.Analytics.Client.Succeeded += Client_Succeeded;
 
@@ -180,11 +186,10 @@ namespace DesktopAnalytics
 			// which should work for everyone (though until there is a plugin that supports channels, it will presumably
 			// never actually find a pre-existing config file from a different channel).
 
-			string settingsLocation;
-			string softwareName;
-
 			for (int attempt = 0; attempt < 2; attempt++)
 			{
+				string settingsLocation;
+				string softwareName;
 				if (attempt == 0)
 				{
 					if (!TryGetSettingsLocationInfoFromEntryAssembly(out settingsLocation, out softwareName))
@@ -357,6 +362,7 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
 		/// </summary>
+		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
 			_userInfo = userInfo;
@@ -383,9 +389,8 @@ namespace DesktopAnalytics
 			{
 				try
 				{
-					Uri uri;
 					bool json = string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
-					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out uri);
+					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out var uri);
 					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 					{
 						var launchProperties = new Properties { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
@@ -395,7 +400,7 @@ namespace DesktopAnalytics
 							var result = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
 							if (json)
 							{
-								Debug.WriteLine(String.Format("DesktopAnalytics: geolocation JSON data = {0}", result));
+								Debug.WriteLine($"DesktopAnalytics: geolocation JSON data = {result}");
 								var j = JObject.Parse(result);
 								AddGeolocationProperty(j, "city");
 								AddGeolocationProperty(j, "country", "countryCode");
@@ -403,7 +408,7 @@ namespace DesktopAnalytics
 							}
 							else
 							{
-								Debug.WriteLine(String.Format("DesktopAnalytics: external ip = {0}", result));
+								Debug.WriteLine($"DesktopAnalytics: external ip = {result}");
 								_options.Context.Add("ip", result);
 								_propertiesThatGoWithEveryEvent.Add("ip", result);
 							}
@@ -452,10 +457,16 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Record an event
+		/// Records an event
 		/// </summary>
-		///	Analytics.RecordEvent("Save PDF");
-		/// <param name="eventName"></param>
+		/// <example>
+		///	Analytics.Track("Save PDF");
+		///	</example>
+		/// <param name="eventName">A good event name should be meaningful to a developer or
+		/// analyst, relatively short, and unique within an app. (Of course, you can issue the
+		/// same event from multiple places in your application code if they should be treated as
+		/// equivalent events.)</param>
+		[PublicAPI]
 		public static void Track(string eventName)
 		{
 			if (!AllowTracking)
@@ -468,14 +479,18 @@ namespace DesktopAnalytics
 		/// Record an event with extra properties
 		/// </summary>
 		/// <example>
-		///	Analytics.RecordEvent("Save PDF", new Dictionary<string, string>()
+		///	Analytics.Track("Save PDF", new Dictionary&lt;string, string&gt;()
 		/// {
 		///		{"Portion",  Enum.GetName(typeof(BookletPortions), BookletPortion)},
 		///		{"Layout", PageLayout.ToString()}
 		///	});
 		///	</example>
-		/// <param name="eventName"></param>
-		/// <param name="properties"></param>
+		/// <param name="eventName">A good event name should be meaningful to a developer or
+		/// analyst, relatively short, and unique within an app. (Of course, you can issue the
+		/// same event from multiple places in your application code if they should be treated as
+		/// equivalent events.)</param>
+		/// <param name="properties">A dictionary of key-value pairs that are relevant in
+		/// understanding more about the event being tracked.</param>
 		public static void Track(string eventName, Dictionary<string, string> properties)
 		{
 			if (!AllowTracking)
@@ -488,6 +503,7 @@ namespace DesktopAnalytics
 		/// Sends the exception's message and stacktrace
 		/// </summary>
 		/// <param name="e"></param>
+		[PublicAPI]
 		public static void ReportException(Exception e)
 		{
 			ReportException(e, null);
@@ -555,8 +571,21 @@ namespace DesktopAnalytics
 				// The documentation is ambiguous about whether Flush() needs to be called before Dispose(),
 				// but source code at https://github.com/segmentio/Analytics.NET/blob/master/Analytics/Client.cs
 				// clearly says "Note, this does not call Flush() first".
-				// So to be sure of getting all our events we should call it.
-				Segment.Analytics.Client.Flush();
+				// So to be sure of getting all our events we should call it. Unfortunately, if Flush is called
+				// in response to the main application window closing, it can cause deadlock, and the app hangs.
+				// So instead of calling Flush, if there are events in the queue, we just wait a little while.
+				// The default timeout on the client is 5 seconds, so probably we should never need to wait
+				// longer than that.
+				var stats = Segment.Analytics.Client.Statistics;
+				int totalWait = 0;
+				while (stats.Submitted > stats.Failed + stats.Succeeded)
+				{
+					if (totalWait > 7500)
+						break;
+					totalWait += 2500;
+					Thread.Sleep(2500);
+				}
+				//Segment.Analytics.Client.Flush();
 				Segment.Analytics.Client.Dispose();
 			}
 		}
@@ -572,7 +601,7 @@ namespace DesktopAnalytics
 			private readonly PlatformID _platform;
 			private readonly int _major;
 			private readonly int _minor;
-			public string Label { get; private set; }
+			public string Label { get; }
 
 			public Version(PlatformID platform, int major, int minor, string label)
 			{
@@ -593,19 +622,21 @@ namespace DesktopAnalytics
 		{
 			if (Environment.OSVersion.Platform == PlatformID.Unix)
 			{
-				return UnixName == "Linux" ? String.Format("{0} / {1}", LinuxVersion, LinuxDesktop) : UnixName;
+				return UnixName == "Linux" ? $"{LinuxVersion} / {LinuxDesktop}" : UnixName;
 			}
-			var list = new List<Version>();
-			list.Add(new Version(System.PlatformID.Win32NT, 5, 0, "Windows 2000"));
-			list.Add(new Version(System.PlatformID.Win32NT, 5, 1, "Windows XP"));
-			list.Add(new Version(System.PlatformID.Win32NT, 6, 0, "Vista"));
-			list.Add(new Version(System.PlatformID.Win32NT, 6, 1, "Windows 7"));
-			// After Windows 8 the Environment.OSVersion started misreporting information unless
-			// your app has a manifest which says it supports the OS it is running on.  This is not
-			// helpful if someone starts using an app built before the OS is released. Anything that
-			// reports its self as Windows 8 is suspect, and must get the version info another way.
-			list.Add(new Version(PlatformID.Win32NT, 6, 3, "Windows 8.1"));
-			list.Add(new Version(PlatformID.Win32NT, 10, 0, "Windows 10"));
+			var list = new List<Version>
+			{
+				new Version(PlatformID.Win32NT, 5, 0, "Windows 2000"),
+				new Version(PlatformID.Win32NT, 5, 1, "Windows XP"),
+				new Version(PlatformID.Win32NT, 6, 0, "Vista"),
+				new Version(PlatformID.Win32NT, 6, 1, "Windows 7"),
+				// reports its self as Windows 8 is suspect, and must get the version info another way.
+				// helpful if someone starts using an app built before the OS is released. Anything that
+				// your app has a manifest which says it supports the OS it is running on.  This is not
+				// After Windows 8 the Environment.OSVersion started misreporting information unless
+				new Version(PlatformID.Win32NT, 6, 3, "Windows 8.1"),
+				new Version(PlatformID.Win32NT, 10, 0, "Windows 10")
+			};
 
 			foreach (var version in list)
 			{
@@ -725,11 +756,11 @@ namespace DesktopAnalytics
 					{
 						var versionData = File.ReadAllText("/etc/wasta-release");
 						var versionLines = versionData.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-						for (int i = 0; i < versionLines.Length; ++i)
+						foreach (var line in versionLines)
 						{
-							if (versionLines[i].StartsWith("DESCRIPTION=\""))
+							if (line.StartsWith("DESCRIPTION=\""))
 							{
-								_linuxVersion = versionLines[i].Substring(13).Trim(new char[] { '"' });
+								_linuxVersion = line.Substring(13).Trim('"');
 								break;
 							}
 						}
@@ -811,7 +842,7 @@ namespace DesktopAnalytics
 					if (!string.IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
 					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
-					_linuxDesktop = String.Format("{0} ({1}{2})", currentDesktop, gdmSession, additionalInfo);
+					_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
 				}
 				return _linuxDesktop;
 			}

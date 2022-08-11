@@ -4,7 +4,7 @@ namespace SampleAppWithForm
 {
 	internal static class Program
 	{
-		internal static Analytics s_analyticsSingleton;
+		internal static Analytics? s_analyticsSingleton;
 		/// <summary>
 		///  The main entry point for the application.
 		/// </summary>

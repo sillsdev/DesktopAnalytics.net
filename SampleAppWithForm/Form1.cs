@@ -28,7 +28,10 @@ namespace SampleAppWithForm
 			Debug.WriteLine($"Succeeded: {Segment.Analytics.Client.Statistics.Succeeded}; " +
 				$"Submitted: {Segment.Analytics.Client.Statistics.Submitted}; " +
 				$"Failed:  {Segment.Analytics.Client.Statistics.Failed}");
-			Program.s_analyticsSingleton.Dispose();
+			// This allows us to illustrate the deadlock problem.
+			if (_chkFlush.Checked) 
+				Segment.Analytics.Client.Flush();
+			Program.s_analyticsSingleton?.Dispose();
 		}
 	}
 }
