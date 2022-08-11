@@ -14,3 +14,4 @@ output/
 Publish Example.txt
 ReadMe.html
 /.vs/**
+**/launchSettings.json

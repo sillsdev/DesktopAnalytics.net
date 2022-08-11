@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using DesktopAnalytics;
 
@@ -11,16 +12,16 @@ namespace SampleApp
 		{
 			if (args.Length == 0)
 			{
-				Console.WriteLine("Usage: SampleApp <segmentioApiSecret>");
+				Debug.WriteLine("Usage: SampleApp <segmentioApiSecret>");
 			}
 
-			var userInfo = new UserInfo()
-				{
-					FirstName = "John",
-					LastName = "Smith",
-					Email="john@example.com",
-					UILanguageCode= "fr"
-				};
+			var userInfo = new UserInfo
+			{
+				FirstName = "John",
+				LastName = "Smith",
+				Email="john@example.com",
+				UILanguageCode= "fr"
+			};
 			userInfo.OtherProperties.Add("HowIUseIt","This is a really long explanation of how I use this product to see how much you would be able to extract from Mixpanel.\r\nAnd a second line of it.");
 
 			var propertiesThatGoWithEveryEvent = new Dictionary<string, string> {{"channel", "beta"}};
@@ -33,7 +34,7 @@ namespace SampleApp
 				DesktopAnalytics.Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
 				DesktopAnalytics.Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
 				Segment.Analytics.Client.Flush();
-				Console.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
+				Debug.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 
 				DesktopAnalytics.Analytics.SetApplicationProperty("TimeSinceLaunch", "23 seconds");
@@ -41,6 +42,10 @@ namespace SampleApp
 				Segment.Analytics.Client.Flush();
 				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
+
+				Debug.WriteLine($"Succeeded: {Segment.Analytics.Client.Statistics.Succeeded}; " +
+					$"Submitted: {Segment.Analytics.Client.Statistics.Submitted}; " +
+					$"Failed:  {Segment.Analytics.Client.Statistics.Failed}");
 			}
 		}
 	}
