@@ -15,10 +15,13 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 </PropertyGroup>
 <ItemGroup>
+    <PackageReference Include="JetBrains.Annotations" Version="2022.1.0">
+      <PrivateAssets>All</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
 </ItemGroup>
 <ItemGroup>
-  <PackageReference Include="Analytics" Version="3.6.0" />
+  <PackageReference Include="Analytics" Version="3.8.1" />
   <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
   <PackageReference Include="GitVersion.MsBuild" Version="5.10.3">
     <PrivateAssets>all</PrivateAssets>

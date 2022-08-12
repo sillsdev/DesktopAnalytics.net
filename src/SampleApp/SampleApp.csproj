@@ -9,7 +9,7 @@
   <IsPackable>false</IsPackable>
 </PropertyGroup>
 <ItemGroup>
-  <PackageReference Include="Analytics" Version="3.6.0" />
+  <PackageReference Include="Analytics" Version="3.8.1" />
   <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
 </ItemGroup>
 <ItemGroup>

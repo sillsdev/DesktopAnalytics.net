@@ -1,5 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
-using DesktopAnalytics;
+using System.Windows.Forms;
 
 namespace SampleAppWithForm
 {
@@ -28,7 +30,14 @@ namespace SampleAppWithForm
 			Debug.WriteLine($"Succeeded: {Segment.Analytics.Client.Statistics.Succeeded}; " +
 				$"Submitted: {Segment.Analytics.Client.Statistics.Submitted}; " +
 				$"Failed:  {Segment.Analytics.Client.Statistics.Failed}");
-			Program.s_analyticsSingleton.Dispose();
+			// This allows us to illustrate the deadlock problem:
+			// https://github.com/segmentio/Analytics.NET/issues/200
+			if (_chkFlush.Checked) 
+				Segment.Analytics.Client.Flush();
+			var stopwatch = Stopwatch.StartNew();
+			Program.s_analyticsSingleton?.Dispose();
+			stopwatch.Stop();
+			Debug.WriteLine($"Total wait = {stopwatch.Elapsed}");
 		}
 	}
 }

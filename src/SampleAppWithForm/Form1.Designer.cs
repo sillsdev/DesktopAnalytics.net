@@ -1,4 +1,6 @@
-﻿namespace SampleAppWithForm
+﻿using System.Windows.Forms;
+
+namespace SampleAppWithForm
 {
 	partial class Form1
 	{
