@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows.Forms;
+using DesktopAnalytics;
 
 namespace SampleAppWithForm
 {
@@ -19,21 +20,23 @@ namespace SampleAppWithForm
 
 		private void HandleTrackButtonClick(object sender, EventArgs e)
 		{
-			DesktopAnalytics.Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
-			DesktopAnalytics.Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
+			Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
+			Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
 			if (_chkFlush.Checked) 
-				Segment.Analytics.Client.Flush();
+				Analytics.Flush();
 		}
 
 		private void Form1_FormClosed(object sender, FormClosedEventArgs e)
 		{
-			Debug.WriteLine($"Succeeded: {Segment.Analytics.Client.Statistics.Succeeded}; " +
-				$"Submitted: {Segment.Analytics.Client.Statistics.Submitted}; " +
-				$"Failed:  {Segment.Analytics.Client.Statistics.Failed}");
-			// This allows us to illustrate the deadlock problem:
+			Debug.WriteLine($"Succeeded: {Analytics.Statistics.Succeeded}; " +
+				$"Submitted: {Analytics.Statistics.Submitted}; " +
+				$"Failed:  {Analytics.Statistics.Failed}");
+			// This was added to allow us to illustrate the deadlock problem:
 			// https://github.com/segmentio/Analytics.NET/issues/200
+			// This has now been fixed, but keeping this code to illustrate that
+			// it is not needed (since Dispose does the flush) but allowed.
 			if (_chkFlush.Checked) 
-				Segment.Analytics.Client.Flush();
+				Analytics.Flush();
 			var stopwatch = Stopwatch.StartNew();
 			Program.s_analyticsSingleton?.Dispose();
 			stopwatch.Stop();
