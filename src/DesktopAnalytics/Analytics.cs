@@ -37,6 +37,12 @@ namespace DesktopAnalytics
 	{
 		private const string kUserConfigFileName = "user.config";
 
+		/// <summary>
+		/// Collection of "location"-specific traits about the user. This information is
+		/// also included with each event to facilitate queries about where in the world
+		/// certain events happen. But it is kept separate because there are event-related
+		/// properties that are not meaningful to attach to users.
+		/// </summary>
 		private static JsonObject _locationInfo;
 		private static UserInfo _userInfo;
 		private static Analytics _singleton;
@@ -46,7 +52,12 @@ namespace DesktopAnalytics
 		private static int _exceptionCount = 0;
 
 		public delegate void ExceptionHandlerDelegate(Exception exception);
-
+		/// <summary>
+		/// Allows for a client to handle/report/log exceptions thrown during analytics reporting.
+		/// Typically clients will not need/want to subscribe to this event. If they do, care
+		/// should probably be taken to avoid throwing an unhandled exception during handling of
+		/// the event, since clients presumably do not want analytics-related errors to be fatal.
+		/// </summary>
 		public event ExceptionHandlerDelegate AnalyticsExceptionThrown;
 
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
@@ -364,7 +375,7 @@ namespace DesktopAnalytics
 
 		private static void UpdateSegmentIOInformationOnThisUser()
 		{
-			var traits = new JsonObject()
+			var traits = new JsonObject
 			{
 				{ "lastName", _userInfo.LastName },
 				{ "firstName", _userInfo.FirstName },
@@ -424,7 +435,7 @@ namespace DesktopAnalytics
 				{
 					bool json = string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
 					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out var uri);
-					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
+					client.DownloadDataCompleted += (sender, e) =>
 					{
 						var launchProperties = new JsonObject { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
 
@@ -441,6 +452,11 @@ namespace DesktopAnalytics
 							}
 							else
 							{
+								// Ideally we will not get here, but in the case where an IP
+								// address cannot be resolved to a real place (e.g., geolocation
+								// server is down, or perhaps a VPN obfuscates this), we just
+								// store the IP address as a fallback. If needed, we might be
+								// able to analyze it later to come up with an actual location.
 								Debug.WriteLine($"DesktopAnalytics: external ip = {result}");
 								_locationInfo.Add("ip", result);
 								_propertiesThatGoWithEveryEvent.Add("ip", result);
@@ -595,6 +611,7 @@ namespace DesktopAnalytics
 			_singleton._analytics.Flush();
 		}
 
+		#region ICoroutineExceptionHandler implementation
 		public void OnExceptionThrown(Exception e)
 		{
 			Debug.WriteLine($"**** Segment.IO Failed to deliver. {e.Message}");
@@ -604,6 +621,7 @@ namespace DesktopAnalytics
 
 			AnalyticsExceptionThrown?.Invoke(e);
 		}
+		#endregion
 
 		public void Dispose()
 		{
