@@ -8,6 +8,7 @@ namespace DesktopAnalytics
 	/// <remarks>See https://github.com/segmentio/Analytics-CSharp#plugin-architecture</remarks>
 	public class StatisticsMonitor : Plugin
 	{
+		private object _lock = new object();
 		/// <summary>
 		/// Note: Incremented by Analytics whenever Segment.Analytics.Client.Track is called
 		/// </summary>
@@ -22,7 +23,7 @@ namespace DesktopAnalytics
 		/// </summary>
 		internal void NoteFailures()
 		{
-			lock (this)
+			lock (_lock)
 				Failed += Outstanding;
 		}
 
@@ -38,7 +39,7 @@ namespace DesktopAnalytics
 			// occur once per user). DesktopAnalytics does not initiate Screen or Group events.
 			if (incomingEvent.type == "track")
 			{
-				lock (this)
+				lock (_lock)
 					Succeeded++;
 			}
 
