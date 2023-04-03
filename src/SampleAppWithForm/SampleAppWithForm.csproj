@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Analytics" Version="3.8.1" />
+    <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -10,11 +10,11 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
+using Segment;
 using Segment.Model;
 
 namespace DesktopAnalytics
@@ -46,12 +46,35 @@ namespace DesktopAnalytics
 
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii)
+		private IClient Client;
+
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType)
 		{
 
 		}
+		private void UpdateServerInformationOnThisUser()
+		{
+			_traits = new Traits()
+			{
+				{"lastName", _userInfo.LastName},
+				{"firstName", _userInfo.FirstName},
+				{"Email", _userInfo.Email},
+				{"UILanguage", _userInfo.UILanguageCode},
+				//segmentio collects this in context, but doesn't seem to convey it to Mixpanel
+				{"$browser", GetOperatingSystemLabel()}
+			};
+			foreach (var property in _userInfo.OtherProperties)
+			{
+				if (!string.IsNullOrWhiteSpace(property.Value))
+					_traits.Add(property.Key, property.Value);
+			}
 
+			if (!AllowTracking)
+				return;
+
+			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
+		}
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
 		/// </summary>
@@ -61,13 +84,31 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
 		/// personally identifiable information to the analytics server.</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false)
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
 		{
 			if (_singleton != null)
 			{
 				throw new ApplicationException("You can only construct a single Analytics object.");
 			}
 			_singleton = this;
+
+			switch (clientType)
+			{
+				case ClientType.Segment:
+				{
+					Client = new SegmentClient();
+					break;
+				}
+				case ClientType.Mixpanel:
+				{
+					Client = new MixpanelClient();
+					break;
+				}
+				default:
+				{
+					throw new ArgumentException("Unknown client type", nameof(clientType));
+				}
+			}
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
 			_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
@@ -104,14 +145,9 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Segment.Analytics.Initialize(apiSecret);
-			// All these were attempts to prevent deadlock when calling Flush in response to
-			// the main window closing
-			//Segment.Analytics.Client.Config.SetTimeout(TimeSpan.FromMilliseconds(5000));
-			//Segment.Analytics.Client.Config.SetMaxRetryTime(TimeSpan.FromMilliseconds(7500));
-			//Segment.Analytics.Client.Config.SetThreads(2);
-			Segment.Analytics.Client.Failed += Client_Failed;
-			Segment.Analytics.Client.Succeeded += Client_Succeeded;
+			Client.Initialize(apiSecret);
+			Client.Failed += Client_Failed;
+			Client.Succeeded += Client_Succeeded;
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -126,7 +162,7 @@ namespace DesktopAnalytics
 			_options = new Options();
 			_options.SetContext(context);
 
-			UpdateSegmentIOInformationOnThisUser();
+			UpdateServerInformationOnThisUser();
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 			string versionNumberWithBuild = "";
 			try
@@ -150,6 +186,7 @@ namespace DesktopAnalytics
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
 			SetApplicationProperty("Browser", GetOperatingSystemLabel());
+			SetApplicationProperty("OS Version Number", GetOperatingSystemVersionLabel());
 			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
 			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
 
@@ -336,29 +373,6 @@ namespace DesktopAnalytics
 			return setting.Value;
 		}
 
-		private static void UpdateSegmentIOInformationOnThisUser()
-		{
-			_traits = new Traits()
-			{
-				{"lastName", _userInfo.LastName},
-				{"firstName", _userInfo.FirstName},
-				{"Email", _userInfo.Email},
-				{"UILanguage", _userInfo.UILanguageCode},
-	            //segmentio collects this in context, but doesn't seem to convey it to MixPanel
-	            {"$browser", GetOperatingSystemLabel()}
-			};
-			foreach (var property in _userInfo.OtherProperties)
-			{
-				if (!string.IsNullOrWhiteSpace(property.Value))
-					_traits.Add(property.Key, property.Value);
-			}
-
-			if (!AllowTracking)
-				return;
-
-			Segment.Analytics.Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
-		}
-
 		/// <summary>
 		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
 		/// </summary>
@@ -366,7 +380,7 @@ namespace DesktopAnalytics
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
 			_userInfo = userInfo;
-			UpdateSegmentIOInformationOnThisUser();
+			_singleton.UpdateServerInformationOnThisUser();
 		}
 
 		/// <summary>
@@ -420,7 +434,7 @@ namespace DesktopAnalytics
 							TrackWithApplicationProperties("Launch", launchProperties);
 							return;
 						}
-						UpdateSegmentIOInformationOnThisUser();
+						UpdateServerInformationOnThisUser();
 						TrackWithApplicationProperties("Launch", launchProperties);
 					};
 					client.DownloadDataAsync(uri);
@@ -553,48 +567,19 @@ namespace DesktopAnalytics
 		}
 
 
-		private static void Client_Succeeded(BaseAction action)
+		private static void Client_Succeeded(string action)
 		{
-			Debug.WriteLine("SegmentIO succeeded: " + action.Type);
+			Debug.WriteLine($"Analytics action succeeded: {action}");
 		}
 
-		private static void Client_Failed(BaseAction action, Exception e)
+		private static void Client_Failed(string action, Exception e)
 		{
-			Debug.WriteLine("**** Segment.IO Failed to deliver");
+			Debug.WriteLine($"**** Analytics action Failed to deliver: {action}{Environment.NewLine}{e.StackTrace}");
 		}
 
 		public void Dispose()
 		{
-			if (Segment.Analytics.Client != null)
-			{
-				// BL-5276 indicated that some events shortly before program termination were not being sent.
-				// The documentation is ambiguous about whether Flush() needs to be called before Dispose(),
-				// but source code at https://github.com/segmentio/Analytics.NET/blob/master/Analytics/Client.cs
-				// clearly says "Note, this does not call Flush() first".
-				// So to be sure of getting all our events we should call it. Unfortunately, if Flush is called
-				// in response to the main application window closing, it can cause deadlock, and the app hangs.
-				// https://github.com/segmentio/Analytics.NET/issues/200
-				// So instead of calling Flush, if there are events in the queue, we just wait a little while.
-				// The default timeout on the client is 5 seconds, so probably we should never need to wait
-				// longer than that.
-				var stats = Segment.Analytics.Client.Statistics;
-				int totalWait = 0;
-				while (stats.Submitted > stats.Failed + stats.Succeeded)
-				{
-					if (totalWait > 7500)
-						break;
-					// This might seem like a long time to wait, but
-					// a) it will only have to do this is there are unsent events in the queue
-					// b) trying to wait less time doesn't seem to make it go any faster. (I did
-					//    try to cut the timeout time way down in hopes that that would cause
-					//    Segment to process the queue immediately, but it seemed to have no
-					//    effect.)
-					totalWait += 500;
-					Thread.Sleep(500);
-				}
-				//Segment.Analytics.Client.Flush();
-				Segment.Analytics.Client.Dispose();
-			}
+			Client?.ShutDown();
 		}
 
 		/// <summary>
@@ -660,6 +645,12 @@ namespace DesktopAnalytics
 			return Environment.OSVersion.VersionString;
 		}
 
+
+		private string GetOperatingSystemVersionLabel()
+		{
+			return Environment.OSVersion.Version.ToString();
+		}
+
 		#region Windows8PlusVersionReportingSupport
 		[DllImport("netapi32.dll", CharSet = CharSet.Auto)]
 		static extern int NetWkstaGetInfo(string server,
@@ -705,7 +696,7 @@ namespace DesktopAnalytics
 			}
 			else if (info._majorVersion == 10 && info._minorVersion == 0)
 			{
-				windowsVersion = "Windows 10";
+				windowsVersion = "Windows 10"; 
 			}
 			else
 			{
@@ -855,8 +846,10 @@ namespace DesktopAnalytics
 			}
 		}
 
+		public static Statistics Statistics => _singleton.Client.Statistics;
+
 		/// <summary>
-		/// All calls to Segment.Analytics.Client.Track should run through here so we can provide defaults for every event
+		/// All calls to Client.Track should run through here so we can provide defaults for every event
 		/// </summary>
 		private static void TrackWithApplicationProperties(string eventName, Properties properties = null)
 		{
@@ -872,7 +865,7 @@ namespace DesktopAnalytics
 					properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? string.Empty);
 			}
-			Segment.Analytics.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
+			_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
 
 		/// <summary>
@@ -899,5 +892,10 @@ namespace DesktopAnalytics
 				(String.IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
 		}
 		#endregion
+
+		public static void FlushClient()
+		{
+			_singleton.Client.Flush();
+		}
 	}
 }
