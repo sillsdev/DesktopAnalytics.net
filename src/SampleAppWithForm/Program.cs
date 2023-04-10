@@ -13,10 +13,19 @@ namespace SampleAppWithForm
 		///  The main entry point for the application.
 		/// </summary>
 		[STAThread]
-		static void Main(string[] args)
+		static int Main(string[] args)
 		{
-			if (args.Length == 0)
-				Console.WriteLine("Usage: SampleApp <segmentioApiSecret> {-q:maxQueuedEvents} {-f:flushInterval}");
+			if (args.Length != 2)
+			{
+				Console.WriteLine("Usage: SampleApp <analyticsApiSecret> <clientType e.g.(Segment|Mixpanel|???)> {-q:maxQueuedEvents} {-f:flushInterval}");
+				return 1;
+			}
+
+			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
+			{
+				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecoginzed client type: {args[1]}");
+				return 1;
+			}
 
 			var userInfo = new UserInfo
 			{
@@ -36,11 +45,12 @@ namespace SampleAppWithForm
 			if (!int.TryParse(args.Skip(1).SingleOrDefault(a => a.StartsWith("-f:"))?.Substring(2), out var flushInterval))
 				flushInterval = -1;
 
-			s_analyticsSingleton = new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent, flushAt: flushAt,
+			s_analyticsSingleton = new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent, clientType: clientType, flushAt: flushAt,
 				flushInterval: flushInterval);
 
 			var mainWindow = new Form1();
 			Application.Run(mainWindow);
+			return 0;
 		}
 	}
 }

@@ -21,6 +21,7 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
 </ItemGroup>
 <ItemGroup>
+  <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
   <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
   <PackageReference Include="GitVersion.MsBuild" Version="5.10.3">
     <PrivateAssets>all</PrivateAssets>

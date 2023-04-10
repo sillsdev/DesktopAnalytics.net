@@ -23,7 +23,7 @@ namespace SampleAppWithForm
 			Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
 			Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
 			if (_chkFlush.Checked) 
-				Analytics.Flush();
+				Analytics.FlushClient();
 		}
 
 		private void Form1_FormClosed(object sender, FormClosedEventArgs e)
@@ -36,7 +36,7 @@ namespace SampleAppWithForm
 			// This has now been fixed, but keeping this code to illustrate that
 			// it is not needed (since Dispose does the flush) but allowed.
 			if (_chkFlush.Checked) 
-				Analytics.Flush();
+				Analytics.FlushClient();
 			var stopwatch = Stopwatch.StartNew();
 			Program.s_analyticsSingleton?.Dispose();
 			stopwatch.Stop();

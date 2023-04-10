@@ -2,13 +2,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup>
   <UseWindowsForms>true</UseWindowsForms>
-  <OutputType>WinExe</OutputType>
+  <OutputType>Exe</OutputType>
   <TargetFramework>net461</TargetFramework>
   <Description>SampleApp</Description>
   <Company>SIL International</Company>
   <IsPackable>false</IsPackable>
+  <ApplicationManifest>app.manifest</ApplicationManifest>
 </PropertyGroup>
 <ItemGroup>
+  <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
   <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
   <PackageReference Include="Segment.Analytics.CSharp" Version="1.0.2" />
 </ItemGroup>
