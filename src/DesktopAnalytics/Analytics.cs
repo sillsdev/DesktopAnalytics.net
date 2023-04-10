@@ -14,8 +14,8 @@ using System.Xml.Linq;
 using System.Xml.XPath;
 using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
-using Segment.Concurrent;
-using Segment.Serialization;
+using Segment;
+using Segment.Model;
 
 namespace DesktopAnalytics
 {
@@ -33,7 +33,7 @@ namespace DesktopAnalytics
 	///			Analytics.RecordEvent("Create New Image");
 	/// }
 	/// </example>
-	public class Analytics : IDisposable, ICoroutineExceptionHandler
+	public class Analytics : IDisposable
 	{
 		private const string kUserConfigFileName = "user.config";
 
@@ -44,30 +44,43 @@ namespace DesktopAnalytics
 		/// properties that are not meaningful to attach to users.
 		/// </summary>
 		private static JsonObject _locationInfo;
+		private static Traits _traits;
 		private static UserInfo _userInfo;
 		private static Analytics _singleton;
-		public static StatisticsMonitor Statistics { get; private set; }
-		private Segment.Analytics.Analytics _analytics;
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int _exceptionCount = 0;
 
-		public delegate void ExceptionHandlerDelegate(Exception exception);
-		/// <summary>
-		/// Allows for a client to handle/report/log exceptions thrown during analytics reporting.
-		/// Typically clients will not need/want to subscribe to this event. If they do, care
-		/// should probably be taken to avoid throwing an unhandled exception during handling of
-		/// the event, since clients presumably do not want analytics-related errors to be fatal.
-		/// </summary>
-		public event ExceptionHandlerDelegate AnalyticsExceptionThrown;
-
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii)
+		private IClient Client;
+
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType)
 		{
 
 		}
+		private void UpdateServerInformationOnThisUser()
+		{
+			_traits = new Traits()
+			{
+				{"lastName", _userInfo.LastName},
+				{"firstName", _userInfo.FirstName},
+				{"Email", _userInfo.Email},
+				{"UILanguage", _userInfo.UILanguageCode},
+				//segmentio collects this in context, but doesn't seem to convey it to Mixpanel
+				{"$browser", GetOperatingSystemLabel()}
+			};
+			foreach (var property in _userInfo.OtherProperties)
+			{
+				if (!string.IsNullOrWhiteSpace(property.Value))
+					_traits.Add(property.Key, property.Value);
+			}
 
+			if (!AllowTracking)
+				return;
+
+			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
+		}
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
 		/// </summary>
@@ -77,19 +90,34 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
 		/// personally identifiable information to the analytics server.</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false,
-			int flushAt = -1, int flushInterval = -1)
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
 		{
 			if (_singleton != null)
 			{
 				throw new ApplicationException("You can only construct a single Analytics object.");
 			}
-
 			_singleton = this;
+
+			switch (clientType)
+			{
+				case ClientType.Segment:
+				{
+					Client = new SegmentClient();
+					break;
+				}
+				case ClientType.Mixpanel:
+				{
+					Client = new MixpanelClient();
+					break;
+				}
+				default:
+				{
+					throw new ArgumentException("Unknown client type", nameof(clientType));
+				}
+			}
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
 			_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
-			Statistics = new StatisticsMonitor();
 
 			AllowTracking = allowTracking;
 
@@ -123,41 +151,9 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Segment.Analytics.Configuration configuration;
-			if (flushAt >= 0)
-			{
-				if (flushInterval >= 0)
-				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushAt, flushInterval, exceptionHandler: this);
-				}
-				else
-				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushAt, exceptionHandler: this);
-				}
-			}
-			else
-			{
-				if (flushInterval >= 0)
-				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushInterval: flushInterval, exceptionHandler: this);
-
-				}
-				else
-				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						exceptionHandler: this);
-				}
-			}
-
-			_analytics = new Segment.Analytics.Analytics(configuration);
-			_analytics.Add(Statistics);
+			Client.Initialize(apiSecret);
+			Client.Failed += Client_Failed;
+			Client.Succeeded += Client_Succeeded;
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -168,27 +164,34 @@ namespace DesktopAnalytics
 
 			_locationInfo = new JsonObject();
 
-			UpdateSegmentIOInformationOnThisUser();
+			UpdateServerInformationOnThisUser();
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 			string versionNumberWithBuild = "";
 			try
 			{
-				// GetEntryAssembly is null for MAF plugins
-				versionNumberWithBuild = (Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly())
-					.GetName().Version.ToString();
+				versionNumberWithBuild = System.Reflection.Assembly.GetEntryAssembly().GetName().Version.ToString();
 			}
 			catch (NullReferenceException)
 			{
-				// This probably can't happen, but if it does, just roll with it.
+				try
+				{
+					// GetEntryAssembly is null for MAF plugins
+					versionNumberWithBuild = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+				}
+				catch (NullReferenceException)
+				{
+					// This probably can't happen, but if it does, just roll with it.
+				}
 			}
-
 			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
 			SetApplicationProperty("Browser", GetOperatingSystemLabel());
+			SetApplicationProperty("OS Version Number", GetOperatingSystemVersionLabel());
 			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
 			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
+
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
@@ -198,9 +201,9 @@ namespace DesktopAnalytics
 			}
 			else if (AnalyticsSettings.Default.LastVersionLaunched != versionNumberWithBuild)
 			{
-				TrackWithApplicationProperties("Upgrade", new JsonObject
+				TrackWithApplicationProperties("Upgrade", new Properties
 				{
-					{ "OldVersion", AnalyticsSettings.Default.LastVersionLaunched },
+					{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
 				});
 			}
 
@@ -335,7 +338,6 @@ namespace DesktopAnalytics
 					if (i > 0)
 						softwareName = softwareName.Substring(0, i);
 				}
-
 				settingsLocation = Path.GetDirectoryName(userConfigPath); // strip product folder
 
 				return true;
@@ -373,35 +375,6 @@ namespace DesktopAnalytics
 			return setting.Value;
 		}
 
-		private static void UpdateSegmentIOInformationOnThisUser()
-		{
-			var traits = new JsonObject
-			{
-				{ "lastName", _userInfo.LastName },
-				{ "firstName", _userInfo.FirstName },
-				{ "Email", _userInfo.Email },
-				{ "UILanguage", _userInfo.UILanguageCode },
-				//segmentio collects this in context, but doesn't seem to convey it to MixPanel
-				{ "$browser", GetOperatingSystemLabel() }
-			};
-			foreach (var property in _userInfo.OtherProperties)
-			{
-				if (!string.IsNullOrWhiteSpace(property.Value))
-					traits.Add(property.Key, property.Value);
-			}
-
-			foreach (var option in _locationInfo)
-			{
-				if (!string.IsNullOrWhiteSpace(option.Key))
-					traits.Add(option.Key, option.Value);
-			}
-
-			if (!AllowTracking)
-				return;
-
-			_singleton._analytics.Identify(AnalyticsSettings.Default.IdForAnalytics, traits);
-		}
-
 		/// <summary>
 		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
 		/// </summary>
@@ -409,7 +382,7 @@ namespace DesktopAnalytics
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
 			_userInfo = userInfo;
-			UpdateSegmentIOInformationOnThisUser();
+			_singleton.UpdateServerInformationOnThisUser();
 		}
 
 		/// <summary>
@@ -418,7 +391,6 @@ namespace DesktopAnalytics
 		/// </summary>
 		/// <remarks>This used to default to "http://icanhazip.com"; //formerly: "http://ipecho.net/plain" (that URL went down, but is now back up)</remarks>
 		public static string UrlThatReturnsExternalIpAddress { get; set; }
-
 		/// <summary>
 		/// Override this for any reason you like, including if the built-in one ( http://ip-api.com/json/) stops working some day.
 		/// This will be ignored if <seealso cref="UrlThatReturnsExternalIpAddress"/> is set.
@@ -435,9 +407,9 @@ namespace DesktopAnalytics
 				{
 					bool json = string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
 					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out var uri);
-					client.DownloadDataCompleted += (sender, e) =>
+					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
 					{
-						var launchProperties = new JsonObject { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
+						var launchProperties = new Properties { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
 
 						try
 						{
@@ -452,13 +424,8 @@ namespace DesktopAnalytics
 							}
 							else
 							{
-								// Ideally we will not get here, but in the case where an IP
-								// address cannot be resolved to a real place (e.g., geolocation
-								// server is down, or perhaps a VPN obfuscates this), we just
-								// store the IP address as a fallback. If needed, we might be
-								// able to analyze it later to come up with an actual location.
 								Debug.WriteLine($"DesktopAnalytics: external ip = {result}");
-								_locationInfo.Add("ip", result);
+								_options.Context.Add("ip", result);
 								_propertiesThatGoWithEveryEvent.Add("ip", result);
 							}
 						}
@@ -469,8 +436,7 @@ namespace DesktopAnalytics
 							TrackWithApplicationProperties("Launch", launchProperties);
 							return;
 						}
-
-						UpdateSegmentIOInformationOnThisUser();
+						UpdateServerInformationOnThisUser();
 						TrackWithApplicationProperties("Launch", launchProperties);
 					};
 					client.DownloadDataAsync(uri);
@@ -590,7 +556,6 @@ namespace DesktopAnalytics
 					props.Add(key, moreProperties[key]);
 				}
 			}
-
 			TrackWithApplicationProperties("Exception", props);
 		}
 
@@ -601,35 +566,23 @@ namespace DesktopAnalytics
 			{
 				prop.Add(key, properties[key]);
 			}
-
 			return prop;
 		}
 
 
-		public static void Flush()
+		private static void Client_Succeeded(string action)
 		{
-			_singleton._analytics.Flush();
+			Debug.WriteLine($"Analytics action succeeded: {action}");
 		}
 
-		#region ICoroutineExceptionHandler implementation
-		public void OnExceptionThrown(Exception e)
+		private static void Client_Failed(string action, Exception e)
 		{
-			Debug.WriteLine($"**** Segment.IO Failed to deliver. {e.Message}");
-
-			lock (Statistics)
-				Statistics.NoteFailures();
-
-			AnalyticsExceptionThrown?.Invoke(e);
+			Debug.WriteLine($"**** Analytics action Failed to deliver: {action}{Environment.NewLine}{e.StackTrace}");
 		}
-		#endregion
 
 		public void Dispose()
 		{
-			if (_singleton != null)
-			{
-				Flush();
-				_singleton._analytics = null;
-			}
+			Client?.ShutDown();
 		}
 
 		/// <summary>
@@ -638,7 +591,6 @@ namespace DesktopAnalytics
 		public static bool AllowTracking { get; private set; }
 
 		#region OSVersion
-
 		class Version
 		{
 			private readonly PlatformID _platform;
@@ -653,12 +605,11 @@ namespace DesktopAnalytics
 				_minor = minor;
 				Label = label;
 			}
-
 			public bool Match(OperatingSystem os)
 			{
 				return os.Version.Minor == _minor &&
-					os.Version.Major == _major &&
-					os.Platform == _platform;
+					   os.Version.Major == _major &&
+					   os.Platform == _platform;
 			}
 		}
 
@@ -668,7 +619,6 @@ namespace DesktopAnalytics
 			{
 				return UnixName == "Linux" ? $"{LinuxVersion} / {LinuxDesktop}" : UnixName;
 			}
-
 			var list = new List<Version>
 			{
 				new Version(PlatformID.Win32NT, 5, 0, "Windows 2000"),
@@ -698,8 +648,13 @@ namespace DesktopAnalytics
 			return Environment.OSVersion.VersionString;
 		}
 
-		#region Windows8PlusVersionReportingSupport
 
+		private string GetOperatingSystemVersionLabel()
+		{
+			return Environment.OSVersion.Version.ToString();
+		}
+
+		#region Windows8PlusVersionReportingSupport
 		[DllImport("netapi32.dll", CharSet = CharSet.Auto)]
 		static extern int NetWkstaGetInfo(string server,
 			int level,
@@ -711,11 +666,13 @@ namespace DesktopAnalytics
 		[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
 		struct MachineInfo
 		{
-			public readonly int platform_id;
-			[MarshalAs(UnmanagedType.LPWStr)] public readonly string _computerName;
-			[MarshalAs(UnmanagedType.LPWStr)] public readonly string _languageGroup;
-			public readonly int _majorVersion;
-			public readonly int _minorVersion;
+			public int platform_id;
+			[MarshalAs(UnmanagedType.LPWStr)]
+			public string _computerName;
+			[MarshalAs(UnmanagedType.LPWStr)]
+			public string _languageGroup;
+			public int _majorVersion;
+			public int _minorVersion;
 		}
 
 		/// <summary>
@@ -742,24 +699,20 @@ namespace DesktopAnalytics
 			}
 			else if (info._majorVersion == 10 && info._minorVersion == 0)
 			{
-				windowsVersion = "Windows 10";
+				windowsVersion = "Windows 10"; 
 			}
 			else
 			{
 				windowsVersion = string.Format("Windows Unknown({0}.{1})", info._majorVersion, info._minorVersion);
 			}
-
 			NetApiBufferFree(pBuffer);
 			return windowsVersion;
 		}
-
 		#endregion
 
 		[DllImport("libc")]
 		static extern int uname(IntPtr buf);
-
 		private static string _unixName;
-
 		private static string UnixName
 		{
 			get
@@ -786,13 +739,11 @@ namespace DesktopAnalytics
 							Marshal.FreeHGlobal(buf);
 					}
 				}
-
 				return _unixName;
 			}
 		}
 
 		private static string _linuxVersion;
-
 		private static string LinuxVersion
 		{
 			get
@@ -834,7 +785,6 @@ namespace DesktopAnalytics
 						_linuxVersion = Environment.OSVersion.VersionString;
 					}
 				}
-
 				return _linuxVersion;
 			}
 		}
@@ -866,17 +816,14 @@ namespace DesktopAnalytics
 						else if (dataDirs.Contains("gnome"))
 							currentDesktop = "Gnome";
 					}
-
 					if (string.IsNullOrEmpty(currentDesktop))
 						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? string.Empty;
 				}
-
 				return currentDesktop.ToLowerInvariant();
 			}
 		}
 
 		private static string _linuxDesktop;
-
 		/// <summary>
 		/// Get the currently running desktop environment (like Unity, Gnome shell etc)
 		/// </summary>
@@ -898,21 +845,21 @@ namespace DesktopAnalytics
 					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
 					_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
 				}
-
 				return _linuxDesktop;
 			}
 		}
 
+		public static Statistics Statistics => _singleton.Client.Statistics;
+
 		/// <summary>
-		/// All calls to Segment.Analytics.Client.Track should run through here so we can provide defaults for every event
+		/// All calls to Client.Track should run through here so we can provide defaults for every event
 		/// </summary>
-		private static void TrackWithApplicationProperties(string eventName, JsonObject properties = null)
+		private static void TrackWithApplicationProperties(string eventName, Properties properties = null)
 		{
 			if (_singleton == null)
 			{
 				throw new ApplicationException("The application must first construct a single Analytics object");
 			}
-
 			if (properties == null)
 				properties = new JsonObject();
 			foreach (var p in _singleton._propertiesThatGoWithEveryEvent)
@@ -921,10 +868,7 @@ namespace DesktopAnalytics
 					properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? string.Empty);
 			}
-
-			lock (Statistics)
-				Statistics.Submitted++;
-			_singleton._analytics.Track(eventName, properties);
+			_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
 
 		/// <summary>
@@ -942,7 +886,6 @@ namespace DesktopAnalytics
 			{
 				_singleton._propertiesThatGoWithEveryEvent.Remove(key);
 			}
-
 			_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
 		}
 
@@ -951,7 +894,11 @@ namespace DesktopAnalytics
 			return _userInfo == null ? "unknown" :
 				(String.IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
 		}
-
 		#endregion
+
+		public static void FlushClient()
+		{
+			_singleton.Client.Flush();
+		}
 	}
 }

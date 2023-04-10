@@ -8,11 +8,18 @@ namespace SampleApp
 {
 	class Program
 	{
-		static void Main(string[] args)
+		static int Main(string[] args)
 		{
-			if (args.Length == 0)
+			if (args.Length != 2)
 			{
-				Debug.WriteLine("Usage: SampleApp <segmentioApiSecret>");
+				Console.WriteLine("Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>");
+				return 1;
+			}
+
+			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
+			{
+				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecoginzed client type: {args[1]}");
+				return 1;
 			}
 
 			var userInfo = new UserInfo
@@ -24,8 +31,8 @@ namespace SampleApp
 			};
 			userInfo.OtherProperties.Add("HowIUseIt","This is a really long explanation of how I use this product to see how much you would be able to extract from Mixpanel.\r\nAnd a second line of it.");
 
-			var propertiesThatGoWithEveryEvent = new Dictionary<string, string> {{"channel", "beta"}};
-			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent))
+			var propsForEveryEvent = new Dictionary<string, string> {{"channel", "beta"}};
+			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent:propsForEveryEvent, clientType: clientType))
 			{
 				Thread.Sleep(3000);
 				//note that anything we set from here on didn't make it into the initial "Launch" event. Things we want to 
@@ -41,9 +48,10 @@ namespace SampleApp
 				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 
-				Debug.WriteLine($"Succeeded: {Analytics.Statistics.Succeeded}; " +
+				Console.WriteLine($"Succeeded: {Analytics.Statistics.Succeeded}; " +
 					$"Submitted: {Analytics.Statistics.Submitted}; " +
 					$"Failed:  {Analytics.Statistics.Failed}");
+				return 0;
 			}
 		}
 	}

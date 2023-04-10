@@ -13,10 +13,14 @@ namespace SampleAppWithForm
 		///  The main entry point for the application.
 		/// </summary>
 		[STAThread]
-		static void Main(string[] args)
+		static int Main(string[] args)
 		{
-			if (args.Length == 0)
-				Console.WriteLine("Usage: SampleApp <segmentioApiSecret> {-q:maxQueuedEvents} {-f:flushInterval}");
+			if (args.Length != 2)
+			{
+				Console.WriteLine("Usage: SampleApp <analyticsApiSecret> <clientType e.g.(Segment|Mixpanel|???)> {-q:maxQueuedEvents} {-f:flushInterval}");
+				return 1;
+			}
+
 
 			var userInfo = new UserInfo
 			{
@@ -41,6 +45,7 @@ namespace SampleAppWithForm
 
 			var mainWindow = new Form1();
 			Application.Run(mainWindow);
+			return 0;
 		}
 	}
 }
