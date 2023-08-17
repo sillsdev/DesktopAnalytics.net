@@ -84,7 +84,9 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
 		/// personally identifiable information to the analytics server.</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
+		/// <param name="clientType"></param>
+		/// <param name="host">For SegmentClient only, the url of the host to send analytics to</param>
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
 		{
 			if (_singleton != null)
 			{
@@ -101,7 +103,11 @@ namespace DesktopAnalytics
 				}
 				case ClientType.Mixpanel:
 				{
-					Client = new MixpanelClient();
+					if (host != null)
+					{
+                            throw new ArgumentException("MixpanelClient does not currently support a host parameter");
+                        }
+                        Client = new MixpanelClient();
 					break;
 				}
 				default:
@@ -145,7 +151,7 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Client.Initialize(apiSecret);
+			Client.Initialize(apiSecret, host);
 			Client.Failed += Client_Failed;
 			Client.Succeeded += Client_Succeeded;
 

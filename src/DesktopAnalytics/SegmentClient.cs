@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using Segment;
 using Segment.Model;
 
 namespace DesktopAnalytics
@@ -9,13 +10,19 @@ namespace DesktopAnalytics
 
 		public event Action<string, Exception> Failed;
 		public event Action<string> Succeeded;
-		public void Initialize(string apiSecret)
-		{
-			Segment.Analytics.Initialize(apiSecret);
 
-			Segment.Analytics.Client.Succeeded += Success_Handler;
-			Segment.Analytics.Client.Failed += Fail_Handler;
-		}
+		// uses default Segment host if host is null
+		public void Initialize(string apiSecret, string host=null)
+		{
+			var config = new Config();
+			if (host != null)
+			{
+                config.SetHost(host);
+            }
+            Segment.Analytics.Initialize(apiSecret, config);
+            Segment.Analytics.Client.Succeeded += Success_Handler;
+            Segment.Analytics.Client.Failed += Fail_Handler;
+        }
 
 		private void Fail_Handler(BaseAction action, Exception e)
 		{

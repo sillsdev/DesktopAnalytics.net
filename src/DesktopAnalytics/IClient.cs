@@ -5,7 +5,7 @@ namespace DesktopAnalytics
 {
 	internal interface IClient
 	{
-		void Initialize(string apiSecret);
+		void Initialize(string apiSecret, string host=null);
 		void ShutDown();
 		event Action<string, Exception> Failed;
 		event Action<string> Succeeded;
