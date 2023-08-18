@@ -75,18 +75,19 @@ namespace DesktopAnalytics
 
 			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _options);
 		}
-		/// <summary>
-		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
-		/// </summary>
-		/// <param name="apiSecret">The segment.com apiSecret</param>
-		/// <param name="userInfo">Information about the user that you have previous collected</param>
-		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
-		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
-		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
-		/// personally identifiable information to the analytics server.</param>
-		/// <param name="clientType"></param>
-		/// <param name="host">For SegmentClient only, the url of the host to send analytics to</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
+        /// <summary>
+        /// Initialized a singleton; after calling this, use Analytics.Track() for each event.
+        /// </summary>
+        /// <param name="apiSecret">The segment.com apiSecret</param>
+        /// <param name="userInfo">Information about the user that you have previous collected</param>
+        /// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
+        /// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
+        /// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
+        /// personally identifiable information to the analytics server.</param>
+        /// <param name="clientType"><see cref="ClientType"/></param>
+        /// <param name="host">The url of the host to send analytics to. Will use the client's default if not provided.
+		/// Throws an ArgumentException if the client does not support setting the host.</param>
+        public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
 		{
 			if (_singleton != null)
 			{
@@ -103,11 +104,7 @@ namespace DesktopAnalytics
 				}
 				case ClientType.Mixpanel:
 				{
-					if (host != null)
-					{
-                            throw new ArgumentException("MixpanelClient does not currently support a host parameter");
-                        }
-                        Client = new MixpanelClient();
+                	Client = new MixpanelClient();
 					break;
 				}
 				default:
