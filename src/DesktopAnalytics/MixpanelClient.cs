@@ -16,9 +16,14 @@ namespace DesktopAnalytics
 
 		private readonly List<Task<bool>> _tasks = new List<Task<bool>>();
 
-		public void Initialize(string apiSecret)
+		public void Initialize(string apiSecret, string host = null)
 		{
-			_client = new Mixpanel.MixpanelClient(apiSecret);
+			// currently only the SegmentClient uses the host parameter
+			if (host != null)
+			{
+                throw new ArgumentException("MixpanelClient does not currently support a host parameter");
+            }
+            _client = new Mixpanel.MixpanelClient(apiSecret);
 		}
 
 		public void ShutDown()
