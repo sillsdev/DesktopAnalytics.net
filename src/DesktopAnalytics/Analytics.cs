@@ -48,8 +48,8 @@ namespace DesktopAnalytics
 
 		private IClient Client;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
+            : this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host)
 		{
 
 		}
