@@ -21,7 +21,7 @@ namespace SampleAppWithForm
 		private void HandleTrackButtonClick(object sender, EventArgs e)
 		{
 			Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
-			Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
+			Analytics.Track("SomeEvent", new Dictionary<string, string> {{"SomeValue", "62"}});
 			if (_chkFlush.Checked) 
 				Analytics.FlushClient();
 		}

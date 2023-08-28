@@ -8,7 +8,7 @@ namespace DesktopAnalytics
 	/// <remarks>See https://github.com/segmentio/Analytics-CSharp#plugin-architecture</remarks>
 	public class StatisticsMonitor : Plugin
 	{
-		private object _lock = new object();
+		private readonly object _lock = new object();
 		/// <summary>
 		/// Note: Incremented by Analytics whenever Segment.Analytics.Client.Track is called
 		/// </summary>

@@ -5,7 +5,7 @@ namespace DesktopAnalytics
 {
 	internal interface IClient
 	{
-		void Initialize(string apiSecret, int flushAt, int flushInterval);
+		void Initialize(string apiSecret, string host = null, int flushAt = -1, int flushInterval = -1);
 		void ShutDown();
 		event Action<Exception> Failed;
 		event Action<string> Succeeded;

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Threading;
 using Segment.Concurrent;
 using Segment.Serialization;
 
@@ -8,12 +7,11 @@ namespace DesktopAnalytics
 {
 	internal class SegmentClient : IClient, ICoroutineExceptionHandler
 	{
-
 		public event Action<Exception> Failed;
 		public event Action<string> Succeeded;
 		private Segment.Analytics.Analytics _analytics;
-		public static StatisticsMonitor StatMonitor { get; private set; }
-		public void Initialize(string apiSecret, int flushAt, int flushInterval)
+		public static StatisticsMonitor StatMonitor { get; } = new StatisticsMonitor();
+		public void Initialize(string apiSecret, string host = null, int flushAt = -1, int flushInterval = -1)
 		{
 			Segment.Analytics.Configuration configuration;
 			if (flushAt >= 0)
@@ -22,13 +20,13 @@ namespace DesktopAnalytics
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
 						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushAt, flushInterval, exceptionHandler: this);
+						flushAt, flushInterval, exceptionHandler: this, apiHost:host);
 				}
 				else
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
 						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushAt, exceptionHandler: this);
+						flushAt, exceptionHandler: this, apiHost:host);
 				}
 			}
 			else
@@ -37,14 +35,14 @@ namespace DesktopAnalytics
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
 						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						flushInterval: flushInterval, exceptionHandler: this);
+						flushInterval: flushInterval, exceptionHandler: this, apiHost:host);
 
 				}
 				else
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
 						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-						exceptionHandler: this);
+						exceptionHandler: this, apiHost:host);
 				}
 			}
 

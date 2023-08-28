@@ -56,8 +56,8 @@ namespace DesktopAnalytics
 
 		private IClient Client;
 
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host)
 		{
 
 		}
@@ -83,6 +83,7 @@ namespace DesktopAnalytics
 
 			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _locationInfo);
 		}
+
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
 		/// </summary>
@@ -92,7 +93,14 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
 		/// personally identifiable information to the analytics server.</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, int flushAt = -1, int flushInterval = -1)
+		/// <param name="clientType"><see cref="ClientType"/></param>
+		/// <param name="host">The url of the host to send analytics to. Will use the client's default if not provided.
+		/// Throws an ArgumentException if the client does not support setting the host.</param>
+		/// <param name="flushAt">Count of events at which we flush events. By default, we do not batch events.</param>
+		/// <param name="flushInterval">Interval in seconds at which we flush events. By default, we process every event immediately.</param>
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent,
+			bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment,
+			string host = null, int flushAt = -1, int flushInterval = -1)
 		{
 			if (_singleton != null)
 			{
@@ -153,7 +161,7 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Client.Initialize(apiSecret, flushAt, flushInterval);
+			Client.Initialize(apiSecret, host, flushAt, flushInterval);
 			Client.Failed += Client_Failed;
 			Client.Succeeded += Client_Succeeded;
 
