@@ -31,13 +31,13 @@ namespace DesktopAnalytics
 		/// This property tells Segment to call the <see cref="Execute"/> method
 		/// after all event processing completes.
 		/// </summary>
-		public override PluginType type => PluginType.After;
+		public override PluginType Type => PluginType.After;
 
 		public override RawEvent Execute(RawEvent incomingEvent)
 		{
 			// We only monitor "track" events. We ignore identify events (which are expected to
 			// occur once per user). DesktopAnalytics does not initiate Screen or Group events.
-			if (incomingEvent.type == "track")
+			if (incomingEvent.Type == "track")
 			{
 				lock (_lock)
 					Succeeded++;

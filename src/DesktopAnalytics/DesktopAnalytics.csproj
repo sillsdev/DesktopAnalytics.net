@@ -27,7 +27,7 @@
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
   </PackageReference>
-  <PackageReference Include="Segment.Analytics.CSharp" Version="1.0.2" />
+  <PackageReference Include="Segment.Analytics.CSharp" Version="2.2.0" />
 </ItemGroup>
 <ItemGroup>
   <Reference Include="System.Configuration" />

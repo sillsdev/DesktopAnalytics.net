@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Segment.Analytics.CSharp" Version="1.0.2" />
+    <PackageReference Include="Segment.Analytics.CSharp" Version="2.2.0" />
     <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
   </ItemGroup>
 

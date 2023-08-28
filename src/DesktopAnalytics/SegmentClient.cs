@@ -18,13 +18,11 @@ namespace DesktopAnalytics
 				if (flushInterval >= 0)
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 						flushAt, flushInterval, exceptionHandler: this, apiHost:host);
 				}
 				else
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 						flushAt, exceptionHandler: this, apiHost:host);
 				}
 			}
@@ -33,14 +31,12 @@ namespace DesktopAnalytics
 				if (flushInterval >= 0)
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 						flushInterval: flushInterval, exceptionHandler: this, apiHost:host);
 
 				}
 				else
 				{
 					configuration = new Segment.Analytics.Configuration(apiSecret,
-						Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 						exceptionHandler: this, apiHost:host);
 				}
 			}
