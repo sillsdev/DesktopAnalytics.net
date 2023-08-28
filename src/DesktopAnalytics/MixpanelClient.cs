@@ -9,9 +9,6 @@ namespace DesktopAnalytics
 {
 	internal class MixpanelClient : IClient
 	{
-		public event Action<Exception> Failed;
-		public event Action<string> Succeeded;
-
 		private Mixpanel.MixpanelClient _client;
 
 		private readonly List<Task<bool>> _tasks = new List<Task<bool>>();

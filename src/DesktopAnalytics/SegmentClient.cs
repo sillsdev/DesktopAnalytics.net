@@ -8,7 +8,6 @@ namespace DesktopAnalytics
 	internal class SegmentClient : IClient, ICoroutineExceptionHandler
 	{
 		public event Action<Exception> Failed;
-		public event Action<string> Succeeded;
 		private Segment.Analytics.Analytics _analytics;
 		public static StatisticsMonitor StatMonitor { get; } = new StatisticsMonitor();
 		public void Initialize(string apiSecret, string host = null, int flushAt = -1, int flushInterval = -1)

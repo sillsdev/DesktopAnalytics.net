@@ -34,9 +34,6 @@ namespace DesktopAnalytics
 	/// </example>
 	public class Analytics : IDisposable
 	{
-		public delegate void ExceptionHandlerDelegate(Exception exception);
-		public event ExceptionHandlerDelegate AnalyticsExceptionThrown;
-
 		private const string kUserConfigFileName = "user.config";
 
 		/// <summary>
@@ -54,7 +51,7 @@ namespace DesktopAnalytics
 
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
-		private IClient Client;
+		private readonly IClient Client;
 
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host)
@@ -63,7 +60,7 @@ namespace DesktopAnalytics
 		}
 		private void UpdateServerInformationOnThisUser()
 		{
-			_traits = new JsonObject()
+			_traits = new JsonObject
 			{
 				{"lastName", _userInfo.LastName},
 				{"firstName", _userInfo.FirstName},
@@ -112,7 +109,9 @@ namespace DesktopAnalytics
 			{
 				case ClientType.Segment:
 				{
-					Client = new SegmentClient();
+					var segmentClient = new SegmentClient();
+					segmentClient.Failed += Client_Failed;
+					Client = segmentClient;
 					break;
 				}
 				case ClientType.Mixpanel:
@@ -162,8 +161,6 @@ namespace DesktopAnalytics
 			}
 
 			Client.Initialize(apiSecret, host, flushAt, flushInterval);
-			Client.Failed += Client_Failed;
-			Client.Succeeded += Client_Succeeded;
 
 			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -187,7 +184,7 @@ namespace DesktopAnalytics
 				try
 				{
 					// GetEntryAssembly is null for MAF plugins
-					versionNumberWithBuild = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+					versionNumberWithBuild = Assembly.GetExecutingAssembly().GetName().Version.ToString();
 				}
 				catch (NullReferenceException)
 				{
@@ -462,7 +459,7 @@ namespace DesktopAnalytics
 
 		private bool AddGeolocationProperty(JObject j, string primary, string secondary = null)
 		{
-			var value = j.GetValue(primary).ToString();
+			var value = j.GetValue(primary)?.ToString();
 			if (!string.IsNullOrWhiteSpace(value))
 			{
 				_locationInfo.Add(primary, value);
@@ -580,7 +577,6 @@ namespace DesktopAnalytics
 			return prop;
 		}
 
-
 		private static void Client_Succeeded(string action)
 		{
 			Debug.WriteLine($"Analytics action succeeded: {action}");
@@ -675,13 +671,13 @@ namespace DesktopAnalytics
 		static extern int NetApiBufferFree(IntPtr pBuf);
 
 		[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-		struct MachineInfo
+		private struct MachineInfo
 		{
-			public int platform_id;
+			private int platform_id;
 			[MarshalAs(UnmanagedType.LPWStr)]
-			public string _computerName;
+			private string _computerName;
 			[MarshalAs(UnmanagedType.LPWStr)]
-			public string _languageGroup;
+			private string _languageGroup;
 			public int _majorVersion;
 			public int _minorVersion;
 		}
@@ -693,9 +689,8 @@ namespace DesktopAnalytics
 		/// </summary>
 		public static string GetWindowsVersionInfoFromNetworkAPI()
 		{
-			IntPtr pBuffer;
 			// Get the version information from the network api, passing null to get network info from this machine
-			var retval = NetWkstaGetInfo(null, 100, out pBuffer);
+			var retval = NetWkstaGetInfo(null, 100, out var pBuffer);
 			if (retval != 0)
 				return "Windows Unknown(unidentifiable)";
 
