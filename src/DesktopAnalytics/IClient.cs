@@ -1,5 +1,4 @@
-﻿using System;
-using Segment.Serialization;
+﻿using Segment.Serialization;
 
 namespace DesktopAnalytics
 {

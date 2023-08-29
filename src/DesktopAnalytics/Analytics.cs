@@ -53,11 +53,13 @@ namespace DesktopAnalytics
 
 		private readonly IClient Client;
 
+		[PublicAPI]
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host)
 		{
 
 		}
+
 		private void UpdateServerInformationOnThisUser()
 		{
 			_traits = new JsonObject
