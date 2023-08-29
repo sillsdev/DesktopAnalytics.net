@@ -46,8 +46,13 @@ namespace DesktopAnalytics
 			// So instead of calling Flush, if there are events in the queue, we just wait a little while.
 			// The default timeout on the client is 5 seconds, so probably we should never need to wait
 			// longer than that.
-			var stats = Segment.Analytics.Client.Statistics;
-			int totalWait = 0;
+			var stats = Segment.Analytics.Client?.Statistics;
+
+            // Apparently, Segment.Analytics.Client can already be null at this point.
+            if (stats == null)
+                return;
+
+            int totalWait = 0;
 			while (stats.Submitted > stats.Failed + stats.Succeeded)
 			{
 				if (totalWait > 7500)
@@ -62,7 +67,7 @@ namespace DesktopAnalytics
 				Thread.Sleep(500);
 			}
 			//Client.Flush();
-			Segment.Analytics.Client.Dispose();
+			Segment.Analytics.Client?.Dispose();
 		}
 		public void Identify(string analyticsId, Traits traits, Options options)
 		{
