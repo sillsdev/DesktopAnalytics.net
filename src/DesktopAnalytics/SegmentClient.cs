@@ -49,6 +49,7 @@ namespace DesktopAnalytics
 		{
 			_analytics?.Flush();
 		}
+
 		public void Identify(string analyticsId, JsonObject traits, JsonObject options)
 		{
 			_analytics.Identify(analyticsId, traits);
