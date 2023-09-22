@@ -17,13 +17,13 @@ namespace DesktopAnalytics
 			{
 				if (flushInterval >= 0)
 				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						flushAt, flushInterval, exceptionHandler: this, apiHost:host);
+					configuration = new Segment.Analytics.Configuration(apiSecret, this,
+						flushAt, flushInterval, apiHost:host);
 				}
 				else
 				{
-					configuration = new Segment.Analytics.Configuration(apiSecret,
-						flushAt, exceptionHandler: this, apiHost:host);
+					configuration = new Segment.Analytics.Configuration(apiSecret, this,
+						flushAt, apiHost:host);
 				}
 			}
 			else

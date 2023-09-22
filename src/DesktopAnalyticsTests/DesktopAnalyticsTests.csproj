@@ -1,15 +1,18 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup>
-	<TargetFramework>net461</TargetFramework>
+	<TargetFramework>net462</TargetFramework>
 	<IsPackable>false</IsPackable>
 	<Company>SIL International</Company>
+	<SignAssembly>True</SignAssembly>
+	<AssemblyOriginatorKeyFile>..\..\DesktopAnalytics.snk</AssemblyOriginatorKeyFile>
 </PropertyGroup>
 <ItemGroup>
   <PackageReference Include="NUnit" Version="3.13.3" />
   <PackageReference Include="NUnit3TestAdapter" Version="3.17.0" />
   <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.2.0" />
   <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  <PackageReference Include="StrongNamer" Version="0.2.5" />
 </ItemGroup>
 <ItemGroup>
   <ProjectReference Include="..\DesktopAnalytics\DesktopAnalytics.csproj" />
