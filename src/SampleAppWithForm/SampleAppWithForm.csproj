@@ -13,7 +13,6 @@
   <ItemGroup>
     <PackageReference Include="Segment.Analytics.CSharp" Version="2.3.0" />
     <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
-    <PackageReference Include="StrongNamer" Version="0.2.5" />
   </ItemGroup>
 
   <ItemGroup>
