@@ -37,10 +37,6 @@ namespace SampleAppWithForm
 			// it is not needed (since Dispose does the flush) but allowed.
 			if (_chkFlush.Checked) 
 				Analytics.FlushClient();
-			var stopwatch = Stopwatch.StartNew();
-			Program.s_analyticsSingleton?.Dispose();
-			stopwatch.Stop();
-			Debug.WriteLine($"Total wait = {stopwatch.Elapsed}");
 		}
 	}
 }

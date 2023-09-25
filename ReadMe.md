@@ -1,11 +1,11 @@
 DesktopAnalytics.net
 ===============================
 
-[Segment.IO](http://segment.io) provides a nice <i>server-oriented</i> library in [Analytics.net](https://github.com/segmentio/Analytics.NET). This project is just one little class that wraps that to provide some standard behavior needed by <i>desktop</i> applications:
+[Segment.IO](http://segment.io) provides a nice <i>server-oriented</i> library in [Analytics-CSharp](https://github.com/segmentio/Analytics-CSharp). This project wraps that to provide some standard behavior needed by .Net <i>desktop</i> applications:
 
 + Supplies guids for user ids, saves that in a Settings file
-+ Looks up the machine's external IP address and sends that along
-+ Set $Browser to the Operating System Version (e.g. "Windows 8").
++ Looks up the machine's external IP address or geolocation and sends that along
++ Set $Browser to the Operating System Version (e.g. "Windows 10").
 + Auto events
 + First launch ("Create" to fit MixPanel's expectation)
 + Version Upgrade
