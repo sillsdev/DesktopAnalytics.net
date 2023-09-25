@@ -40,13 +40,11 @@ namespace SampleApp
 
 				Analytics.SetApplicationProperty("TimeSinceLaunch", "3 seconds");
 				Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "62"}});
-				Analytics.FlushClient();
 				Debug.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 
 				Analytics.SetApplicationProperty("TimeSinceLaunch", "23 seconds");
 				Analytics.Track("SomeEvent", new Dictionary<string, string>() {{"SomeValue", "42"}});
-				Analytics.FlushClient();
 				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 

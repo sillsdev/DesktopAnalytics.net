@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup>
-	<TargetFramework>net461</TargetFramework>
+	<TargetFramework>net462</TargetFramework>
 	<PackageId>SIL.DesktopAnalytics</PackageId>
 	<Authors>John Hatton, Stephen McConnel, Tom Bogle, Eberhard Beilharz, John Thomson, Andrew Polk, Jason Naylor</Authors>
 	<Company>SIL International</Company>
@@ -13,21 +13,23 @@
 <PropertyGroup>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <SignAssembly>False</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\DesktopAnalytics.snk</AssemblyOriginatorKeyFile>
 </PropertyGroup>
 <ItemGroup>
-    <PackageReference Include="JetBrains.Annotations" Version="2022.1.0">
+    <PackageReference Include="JetBrains.Annotations" Version="2023.2.0">
       <PrivateAssets>All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
 </ItemGroup>
 <ItemGroup>
-  <PackageReference Include="Analytics" Version="3.8.1" />
   <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
-  <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
-  <PackageReference Include="GitVersion.MsBuild" Version="5.10.3">
+  <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  <PackageReference Include="GitVersion.MsBuild" Version="5.12.0">
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
   </PackageReference>
+  <PackageReference Include="Segment.Analytics.CSharp" Version="2.3.0" />
 </ItemGroup>
 <ItemGroup>
   <Reference Include="System.Configuration" />
@@ -50,7 +52,4 @@
     <_Parameter1>DesktopAnalyticsTests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
-<ItemGroup>
-  <Folder Include="Properties\" />
-</ItemGroup>
 </Project>

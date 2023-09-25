@@ -3,27 +3,24 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Segment.Model;
+using Segment.Serialization;
 
 namespace DesktopAnalytics
 {
 	internal class MixpanelClient : IClient
 	{
-		public event Action<string, Exception> Failed;
-		public event Action<string> Succeeded;
-
 		private Mixpanel.MixpanelClient _client;
 
 		private readonly List<Task<bool>> _tasks = new List<Task<bool>>();
 
-		public void Initialize(string apiSecret, string host = null)
+		public void Initialize(string apiSecret, string host = null, int _flushAt = -1, int _flushInterval = -1)
 		{
 			// currently only the SegmentClient uses the host parameter
 			if (host != null)
 			{
-                throw new ArgumentException("MixpanelClient does not currently support a host parameter");
-            }
-            _client = new Mixpanel.MixpanelClient(apiSecret);
+				throw new ArgumentException("MixpanelClient does not currently support a host parameter");
+			}
+			_client = new Mixpanel.MixpanelClient(apiSecret);
 		}
 
 		public void ShutDown()
@@ -40,12 +37,12 @@ namespace DesktopAnalytics
 			}
 		}
 
-		public void Identify(string analyticsId, Traits traits, Options options)
+		public void Identify(string analyticsId, JsonObject traits, JsonObject options)
 		{
 			_tasks.Add(_client.PeopleSetAsync(analyticsId, traits));
 		}
 
-		public void Track(string analyticsId, string eventName, Properties properties)
+		public void Track(string analyticsId, string eventName, JsonObject properties)
 		{
 			_tasks.Add(_client.TrackAsync(eventName, analyticsId, properties));
 		}

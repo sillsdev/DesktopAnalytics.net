@@ -3,16 +3,16 @@
 <PropertyGroup>
   <UseWindowsForms>true</UseWindowsForms>
   <OutputType>Exe</OutputType>
-  <TargetFramework>net461</TargetFramework>
+  <TargetFramework>net462</TargetFramework>
   <Description>SampleApp</Description>
   <Company>SIL International</Company>
   <IsPackable>false</IsPackable>
   <ApplicationManifest>app.manifest</ApplicationManifest>
 </PropertyGroup>
 <ItemGroup>
-  <PackageReference Include="Analytics" Version="3.8.1" />
   <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
-  <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  <PackageReference Include="Segment.Analytics.CSharp" Version="2.3.0" />
 </ItemGroup>
 <ItemGroup>
   <ProjectReference Include="..\DesktopAnalytics\DesktopAnalytics.csproj">
