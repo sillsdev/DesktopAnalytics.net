@@ -15,6 +15,7 @@ using System.Xml.XPath;
 using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
 using Segment.Serialization;
+using static System.String;
 
 namespace DesktopAnalytics
 {
@@ -73,7 +74,7 @@ namespace DesktopAnalytics
 			};
 			foreach (var property in _userInfo.OtherProperties)
 			{
-				if (!string.IsNullOrWhiteSpace(property.Value))
+				if (!IsNullOrWhiteSpace(property.Value))
 					_traits.Add(property.Key, property.Value);
 			}
 
@@ -133,7 +134,7 @@ namespace DesktopAnalytics
 			AllowTracking = allowTracking;
 
 			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
-			if (string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
+			if (IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
 				UrlThatReturnsGeolocationJson = "http://ip-api.com/json/";
 
 			if (!AllowTracking)
@@ -148,7 +149,7 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
 				// Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
 				// We really want to use the same ID if possible to keep our statistics valid.
@@ -164,7 +165,7 @@ namespace DesktopAnalytics
 
 			Client.Initialize(apiSecret, host, flushAt, flushInterval);
 
-			if (string.IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
 
 				AnalyticsSettings.Default.IdForAnalytics = Guid.NewGuid().ToString();
@@ -203,7 +204,7 @@ namespace DesktopAnalytics
 			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
 
 
-			if (string.IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
+			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
 				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
@@ -288,7 +289,7 @@ namespace DesktopAnalytics
 						if (idSetting == null)
 							continue;
 						string analyticsId = idSetting.Value;
-						if (string.IsNullOrEmpty(analyticsId))
+						if (IsNullOrEmpty(analyticsId))
 							continue;
 						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
 						AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
@@ -316,7 +317,7 @@ namespace DesktopAnalytics
 				return false;
 			softwareName = Path.GetFileNameWithoutExtension(entryAssembly.Location);
 			AssemblyCompanyAttribute companyAttribute = Attribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-			if (companyAttribute == null || string.IsNullOrEmpty(softwareName))
+			if (companyAttribute == null || IsNullOrEmpty(softwareName))
 				return false;
 			string companyName = companyAttribute.Company;
 			if (companyName == null)
@@ -375,7 +376,7 @@ namespace DesktopAnalytics
 		// If the specified setting's current value is empty, try to extract it from the document.
 		private string ExtractSetting(string current, XDocument doc, string name)
 		{
-			if (!string.IsNullOrEmpty(current))
+			if (!IsNullOrEmpty(current))
 				return current;
 			var setting =
 				doc.XPathSelectElement(
@@ -415,16 +416,17 @@ namespace DesktopAnalytics
 			{
 				try
 				{
-					bool json = string.IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
-					Uri.TryCreate(json ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress, UriKind.Absolute, out var uri);
-					client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
+					var useGeoLocation = IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
+					Uri.TryCreate(useGeoLocation ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress,
+						UriKind.Absolute, out var uri);
+					client.DownloadDataCompleted += (sender, e) =>
 					{
 						var launchProperties = new JsonObject { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
 
 						try
 						{
 							var result = System.Text.Encoding.UTF8.GetString(e.Result).Trim();
-							if (json)
+							if (useGeoLocation)
 							{
 								Debug.WriteLine($"DesktopAnalytics: geolocation JSON data = {result}");
 								var j = JObject.Parse(result);
@@ -462,7 +464,7 @@ namespace DesktopAnalytics
 		private bool AddGeolocationProperty(JObject j, string primary, string secondary = null)
 		{
 			var value = j.GetValue(primary)?.ToString();
-			if (!string.IsNullOrWhiteSpace(value))
+			if (!IsNullOrWhiteSpace(value))
 			{
 				_locationInfo.Add(primary, value);
 				_propertiesThatGoWithEveryEvent.Add(primary, value);
@@ -665,23 +667,23 @@ namespace DesktopAnalytics
 
 		#region Windows8PlusVersionReportingSupport
 		[DllImport("netapi32.dll", CharSet = CharSet.Auto)]
-		static extern int NetWkstaGetInfo(string server,
+		private static extern int NetWkstaGetInfo(string server,
 			int level,
 			out IntPtr info);
 
 		[DllImport("netapi32.dll")]
-		static extern int NetApiBufferFree(IntPtr pBuf);
+		private static extern int NetApiBufferFree(IntPtr pBuf);
 
 		[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
 		private struct MachineInfo
 		{
-			private int platform_id;
+			private readonly int platform_id;
 			[MarshalAs(UnmanagedType.LPWStr)]
-			private string _computerName;
+			private readonly string _computerName;
 			[MarshalAs(UnmanagedType.LPWStr)]
-			private string _languageGroup;
-			public int _majorVersion;
-			public int _minorVersion;
+			private readonly string _languageGroup;
+			public readonly int _majorVersion;
+			public readonly int _minorVersion;
 		}
 
 		/// <summary>
@@ -711,7 +713,7 @@ namespace DesktopAnalytics
 			}
 			else
 			{
-				windowsVersion = string.Format("Windows Unknown({0}.{1})", info._majorVersion, info._minorVersion);
+				windowsVersion = Format("Windows Unknown({0}.{1})", info._majorVersion, info._minorVersion);
 			}
 			NetApiBufferFree(pBuffer);
 			return windowsVersion;
@@ -726,7 +728,7 @@ namespace DesktopAnalytics
 			get
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					return String.Empty;
+					return Empty;
 				if (_unixName == null)
 				{
 					IntPtr buf = IntPtr.Zero;
@@ -739,7 +741,7 @@ namespace DesktopAnalytics
 					}
 					catch
 					{
-						_unixName = String.Empty;
+						_unixName = Empty;
 					}
 					finally
 					{
@@ -757,14 +759,14 @@ namespace DesktopAnalytics
 			get
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					return String.Empty;
+					return Empty;
 				if (_linuxVersion == null)
 				{
-					_linuxVersion = String.Empty;
+					_linuxVersion = Empty;
 					if (File.Exists("/etc/wasta-release"))
 					{
 						var versionData = File.ReadAllText("/etc/wasta-release");
-						var versionLines = versionData.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+						var versionLines = versionData.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 						foreach (var line in versionLines)
 						{
 							if (line.StartsWith("DESCRIPTION=\""))
@@ -777,12 +779,12 @@ namespace DesktopAnalytics
 					else if (File.Exists("/etc/lsb-release"))
 					{
 						var versionData = File.ReadAllText("/etc/lsb-release");
-						var versionLines = versionData.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-						for (int i = 0; i < versionLines.Length; ++i)
+						var versionLines = versionData.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+						foreach (var t in versionLines)
 						{
-							if (versionLines[i].StartsWith("DISTRIB_DESCRIPTION=\""))
+							if (t.StartsWith("DISTRIB_DESCRIPTION=\""))
 							{
-								_linuxVersion = versionLines[i].Substring(21).Trim(new char[] { '"' });
+								_linuxVersion = t.Substring(21).Trim('"');
 								break;
 							}
 						}
@@ -811,7 +813,7 @@ namespace DesktopAnalytics
 				// see http://unix.stackexchange.com/a/116694
 				// and http://askubuntu.com/a/227669
 				var currentDesktop = Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
-				if (string.IsNullOrEmpty(currentDesktop))
+				if (IsNullOrEmpty(currentDesktop))
 				{
 					var dataDirs = Environment.GetEnvironmentVariable("XDG_DATA_DIRS");
 					if (dataDirs != null)
@@ -824,8 +826,8 @@ namespace DesktopAnalytics
 						else if (dataDirs.Contains("gnome"))
 							currentDesktop = "Gnome";
 					}
-					if (string.IsNullOrEmpty(currentDesktop))
-						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? string.Empty;
+					if (IsNullOrEmpty(currentDesktop))
+						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? Empty;
 				}
 				return currentDesktop.ToLowerInvariant();
 			}
@@ -840,15 +842,15 @@ namespace DesktopAnalytics
 			get
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					return string.Empty;
+					return Empty;
 				if (_linuxDesktop == null)
 				{
 					// see http://unix.stackexchange.com/a/116694
 					// and http://askubuntu.com/a/227669
 					var currentDesktop = DesktopEnvironment;
 					var mirSession = Environment.GetEnvironmentVariable("MIR_SERVER_NAME");
-					var additionalInfo = string.Empty;
-					if (!string.IsNullOrEmpty(mirSession))
+					var additionalInfo = Empty;
+					if (!IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
 					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
 					_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
@@ -874,7 +876,7 @@ namespace DesktopAnalytics
 			{
 				if (properties.ContainsKey(p.Key))
 					properties.Remove(p.Key);
-				properties.Add(p.Key, p.Value ?? string.Empty);
+				properties.Add(p.Key, p.Value ?? Empty);
 			}
 			_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
@@ -886,10 +888,10 @@ namespace DesktopAnalytics
 		/// <param name="value"></param>
 		public static void SetApplicationProperty(string key, string value)
 		{
-			if (string.IsNullOrEmpty(key))
+			if (IsNullOrEmpty(key))
 				throw new ArgumentNullException(key);
 			if (value == null)
-				value = string.Empty;
+				value = Empty;
 			if (_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
 			{
 				_singleton._propertiesThatGoWithEveryEvent.Remove(key);
@@ -900,7 +902,7 @@ namespace DesktopAnalytics
 		private static string GetUserNameForEvent()
 		{
 			return _userInfo == null ? "unknown" :
-				(String.IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
+				(IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
 		}
 		#endregion
 
