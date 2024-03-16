@@ -55,8 +55,10 @@ namespace DesktopAnalytics
 		private readonly IClient Client;
 
 		[PublicAPI]
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host)
+		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true,
+			bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null, bool useExecutingAssemblyVersion = false)
+			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host,
+				useExecutingAssemblyVersion:useExecutingAssemblyVersion)
 		{
 
 		}
@@ -92,15 +94,17 @@ namespace DesktopAnalytics
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
-		/// personally identifiable information to the analytics server.</param>
+		///     personally identifiable information to the analytics server.</param>
 		/// <param name="clientType"><see cref="ClientType"/></param>
 		/// <param name="host">The url of the host to send analytics to. Will use the client's default if not provided.
-		/// Throws an ArgumentException if the client does not support setting the host.</param>
+		///     Throws an ArgumentException if the client does not support setting the host.</param>
 		/// <param name="flushAt">Count of events at which we flush events. By default, we do not batch events.</param>
 		/// <param name="flushInterval">Interval in seconds at which we flush events. By default, we process every event immediately.</param>
+		/// <param name="useExecutingAssemblyVersion">For plugins (etc.) hosted in-process in another program, set this flag to
+		/// force use of executing assembly instead of entry assembly to get version information.</param>
 		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent,
 			bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment,
-			string host = null, int flushAt = -1, int flushInterval = -1)
+			string host = null, int flushAt = -1, int flushInterval = -1, bool useExecutingAssemblyVersion = false)
 		{
 			if (_singleton != null)
 			{
@@ -176,24 +180,11 @@ namespace DesktopAnalytics
 
 			UpdateServerInformationOnThisUser();
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
-			string versionNumberWithBuild = "";
-			try
-			{
-				// GetEntryAssembly is null for MAF plugins
-				versionNumberWithBuild = (Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly()).GetName().Version.ToString();
-			}
-			catch (NullReferenceException)
-			{
-				try
-				{
-					// GetEntryAssembly is null for MAF plugins
-					versionNumberWithBuild = Assembly.GetExecutingAssembly().GetName().Version.ToString();
-				}
-				catch (NullReferenceException)
-				{
-					// This probably can't happen, but if it does, just roll with it.
-				}
-			}
+			
+			var assembly = Assembly.GetEntryAssembly();
+			if (assembly == null || useExecutingAssemblyVersion) // GetEntryAssembly is null for MAF plugins
+				assembly = Assembly.GetExecutingAssembly();
+			var versionNumberWithBuild = assembly.GetName().Version?.ToString() ?? "";
 			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
