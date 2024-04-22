@@ -43,47 +43,63 @@ namespace DesktopAnalytics
 		/// certain events happen. But it is kept separate because there are event-related
 		/// properties that are not meaningful to attach to users.
 		/// </summary>
-		private static JsonObject _locationInfo;
-		private static JsonObject _traits;
-		private static UserInfo _userInfo;
-		private static Analytics _singleton;
+		private static JsonObject s_locationInfo;
+		private static JsonObject s_traits;
+		private static UserInfo s_userInfo;
+		private static Analytics s_singleton;
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
-		private static int _exceptionCount = 0;
+		private static int s_exceptionCount = 0;
 
 		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
 
 		private readonly IClient Client;
 
+		/// <summary>
+		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
+		/// </summary>
+		/// <param name="apiSecret">The segment.com apiSecret</param>
+		/// <param name="userInfo">Information about the user that you have previous collected</param>
+		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
+		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent
+		/// communication of personally identifiable information to the analytics server.</param>
+		/// <param name="clientType"><see cref="ClientType"/></param>
+		/// <param name="host">The url of the host to send analytics to. Will use the client's
+		/// default if not provided. Throws an ArgumentException if the client does not support
+		/// setting the host.</param>
+		/// <param name="useCallingAssemblyVersion">For plugins (etc.) hosted in-process in another
+		/// program, set this flag to force use of the calling assembly instead of the entry
+		/// assembly to get version information. (GetEntryAssembly is null for MAF plugins.)
+		/// </param>
 		[PublicAPI]
 		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true,
-			bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null, bool useExecutingAssemblyVersion = false)
+			bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null, bool useCallingAssemblyVersion = false)
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host,
-				useExecutingAssemblyVersion:useExecutingAssemblyVersion)
+				assemblyToUseForVersion:useCallingAssemblyVersion ? Assembly.GetCallingAssembly() : null)
 		{
 
 		}
 
 		private void UpdateServerInformationOnThisUser()
 		{
-			_traits = new JsonObject
+			s_traits = new JsonObject
 			{
-				{"lastName", _userInfo.LastName},
-				{"firstName", _userInfo.FirstName},
-				{"Email", _userInfo.Email},
-				{"UILanguage", _userInfo.UILanguageCode},
+				{"lastName", s_userInfo.LastName},
+				{"firstName", s_userInfo.FirstName},
+				{"Email", s_userInfo.Email},
+				{"UILanguage", s_userInfo.UILanguageCode},
 				//segmentio collects this in context, but doesn't seem to convey it to Mixpanel
 				{"$browser", GetOperatingSystemLabel()}
 			};
-			foreach (var property in _userInfo.OtherProperties)
+			foreach (var property in s_userInfo.OtherProperties)
 			{
 				if (!IsNullOrWhiteSpace(property.Value))
-					_traits.Add(property.Key, property.Value);
+					s_traits.Add(property.Key, property.Value);
 			}
 
 			if (!AllowTracking)
 				return;
 
-			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, _traits, _locationInfo);
+			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
 		}
 
 		/// <summary>
@@ -91,26 +107,34 @@ namespace DesktopAnalytics
 		/// </summary>
 		/// <param name="apiSecret">The segment.com apiSecret</param>
 		/// <param name="userInfo">Information about the user that you have previous collected</param>
-		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with *every* event</param>
+		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with
+		/// *every* event</param>
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
-		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent communication of
-		///     personally identifiable information to the analytics server.</param>
+		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent
+		/// communication of personally identifiable information to the analytics server.</param>
 		/// <param name="clientType"><see cref="ClientType"/></param>
-		/// <param name="host">The url of the host to send analytics to. Will use the client's default if not provided.
-		///     Throws an ArgumentException if the client does not support setting the host.</param>
-		/// <param name="flushAt">Count of events at which we flush events. By default, we do not batch events.</param>
-		/// <param name="flushInterval">Interval in seconds at which we flush events. By default, we process every event immediately.</param>
-		/// <param name="useExecutingAssemblyVersion">For plugins (etc.) hosted in-process in another program, set this flag to
-		/// force use of executing assembly instead of entry assembly to get version information.</param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string, string> propertiesThatGoWithEveryEvent,
-			bool allowTracking = true, bool retainPii = false, ClientType clientType = ClientType.Segment,
-			string host = null, int flushAt = -1, int flushInterval = -1, bool useExecutingAssemblyVersion = false)
+		/// <param name="host">The url of the host to send analytics to. Will use the client's
+		/// default if not provided. Throws an ArgumentException if the client does not support
+		/// setting the host.</param>
+		/// <param name="flushAt">Count of events at which we flush events. By default, we do not
+		/// batch events.</param>
+		/// <param name="flushInterval">Interval in seconds at which we flush events. By default,
+		/// we process every event immediately.</param>
+		/// <param name="assemblyToUseForVersion">For plugins (etc.) hosted in-process in another
+		/// program, pass a specific assembly to use as the basis for getting the version
+		/// information. (Note: GetEntryAssembly is null for MAF plugins.)
+		/// </param>
+		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string,
+			string> propertiesThatGoWithEveryEvent, bool allowTracking = true,
+			bool retainPii = false, ClientType clientType = ClientType.Segment,
+			string host = null, int flushAt = -1, int flushInterval = -1,
+			Assembly assemblyToUseForVersion = null)
 		{
-			if (_singleton != null)
+			if (s_singleton != null)
 			{
 				throw new ApplicationException("You can only construct a single Analytics object.");
 			}
-			_singleton = this;
+			s_singleton = this;
 
 			switch (clientType)
 			{
@@ -133,7 +157,7 @@ namespace DesktopAnalytics
 			}
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-			_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
+			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
 
 			AllowTracking = allowTracking;
 
@@ -176,14 +200,12 @@ namespace DesktopAnalytics
 				AnalyticsSettings.Default.Save();
 			}
 
-			_locationInfo = new JsonObject();
+			s_locationInfo = new JsonObject();
 
 			UpdateServerInformationOnThisUser();
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 			
-			var assembly = Assembly.GetEntryAssembly();
-			if (assembly == null || useExecutingAssemblyVersion) // GetEntryAssembly is null for MAF plugins
-				assembly = Assembly.GetExecutingAssembly();
+			var assembly = assemblyToUseForVersion ?? Assembly.GetEntryAssembly();
 			var versionNumberWithBuild = assembly.GetName().Version?.ToString() ?? "";
 			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
@@ -383,8 +405,8 @@ namespace DesktopAnalytics
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
-			_userInfo = userInfo;
-			_singleton.UpdateServerInformationOnThisUser();
+			s_userInfo = userInfo;
+			s_singleton.UpdateServerInformationOnThisUser();
 		}
 
 		/// <summary>
@@ -428,7 +450,7 @@ namespace DesktopAnalytics
 							else
 							{
 								Debug.WriteLine($"DesktopAnalytics: external ip = {result}");
-								_locationInfo.Add("ip", result);
+								s_locationInfo.Add("ip", result);
 								_propertiesThatGoWithEveryEvent.Add("ip", result);
 							}
 						}
@@ -457,7 +479,7 @@ namespace DesktopAnalytics
 			var value = j.GetValue(primary)?.ToString();
 			if (!IsNullOrWhiteSpace(value))
 			{
-				_locationInfo.Add(primary, value);
+				s_locationInfo.Add(primary, value);
 				_propertiesThatGoWithEveryEvent.Add(primary, value);
 				return true;
 			}
@@ -538,11 +560,11 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			_exceptionCount++;
+			s_exceptionCount++;
 
 			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions,
 			// in the background, blowing through our Analytics service limits and getting us kicked off.
-			if (_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
+			if (s_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
 			{
 				return;
 			}
@@ -704,7 +726,7 @@ namespace DesktopAnalytics
 			}
 			else
 			{
-				windowsVersion = Format("Windows Unknown({0}.{1})", info._majorVersion, info._minorVersion);
+				windowsVersion = $"Windows Unknown({info._majorVersion}.{info._minorVersion})";
 			}
 			NetApiBufferFree(pBuffer);
 			return windowsVersion;
@@ -713,14 +735,14 @@ namespace DesktopAnalytics
 
 		[DllImport("libc")]
 		static extern int uname(IntPtr buf);
-		private static string _unixName;
+		private static string s_unixName;
 		private static string UnixName
 		{
 			get
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
 					return Empty;
-				if (_unixName == null)
+				if (s_unixName == null)
 				{
 					IntPtr buf = IntPtr.Zero;
 					try
@@ -728,11 +750,11 @@ namespace DesktopAnalytics
 						// This is a hacktastic way of getting sysname from uname()
 						buf = Marshal.AllocHGlobal(8192);
 						if (uname(buf) == 0)
-							_unixName = Marshal.PtrToStringAnsi(buf);
+							s_unixName = Marshal.PtrToStringAnsi(buf);
 					}
 					catch
 					{
-						_unixName = Empty;
+						s_unixName = Empty;
 					}
 					finally
 					{
@@ -740,7 +762,7 @@ namespace DesktopAnalytics
 							Marshal.FreeHGlobal(buf);
 					}
 				}
-				return _unixName;
+				return s_unixName;
 			}
 		}
 
@@ -824,7 +846,7 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private static string _linuxDesktop;
+		private static string s_linuxDesktop;
 		/// <summary>
 		/// Get the currently running desktop environment (like Unity, Gnome shell etc)
 		/// </summary>
@@ -834,7 +856,7 @@ namespace DesktopAnalytics
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
 					return Empty;
-				if (_linuxDesktop == null)
+				if (s_linuxDesktop == null)
 				{
 					// see http://unix.stackexchange.com/a/116694
 					// and http://askubuntu.com/a/227669
@@ -844,32 +866,32 @@ namespace DesktopAnalytics
 					if (!IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
 					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
-					_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
+					s_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
 				}
-				return _linuxDesktop;
+				return s_linuxDesktop;
 			}
 		}
 
-		public static Statistics Statistics => _singleton.Client.Statistics;
+		public static Statistics Statistics => s_singleton.Client.Statistics;
 
 		/// <summary>
 		/// All calls to Client.Track should run through here so we can provide defaults for every event
 		/// </summary>
 		private static void TrackWithApplicationProperties(string eventName, JsonObject properties = null)
 		{
-			if (_singleton == null)
+			if (s_singleton == null)
 			{
 				throw new ApplicationException("The application must first construct a single Analytics object");
 			}
 			if (properties == null)
 				properties = new JsonObject();
-			foreach (var p in _singleton._propertiesThatGoWithEveryEvent)
+			foreach (var p in s_singleton._propertiesThatGoWithEveryEvent)
 			{
 				if (properties.ContainsKey(p.Key))
 					properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? Empty);
 			}
-			_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
+			s_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
 
 		/// <summary>
@@ -883,23 +905,23 @@ namespace DesktopAnalytics
 				throw new ArgumentNullException(key);
 			if (value == null)
 				value = Empty;
-			if (_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
+			if (s_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
 			{
-				_singleton._propertiesThatGoWithEveryEvent.Remove(key);
+				s_singleton._propertiesThatGoWithEveryEvent.Remove(key);
 			}
-			_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
+			s_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
 		}
 
 		private static string GetUserNameForEvent()
 		{
-			return _userInfo == null ? "unknown" :
-				(IsNullOrWhiteSpace(_userInfo.FirstName) ? "" : _userInfo.FirstName + " ") + _userInfo.LastName;
+			return s_userInfo == null ? "unknown" :
+				(IsNullOrWhiteSpace(s_userInfo.FirstName) ? "" : s_userInfo.FirstName + " ") + s_userInfo.LastName;
 		}
 		#endregion
 
 		public static void FlushClient()
 		{
-			_singleton.Client.Flush();
+			s_singleton.Client.Flush();
 		}
 	}
 }

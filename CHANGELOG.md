@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- [DesktopAnalytics] Changed useExecutingAssembly flag in one of the Analytics constructors to useCallingAssemblyVersion
+- [DesktopAnalytics] Changed useExecutingAssembly flag in the other Analytics constructor to assemblyToUseForVersion
+
 ## [5.1.0] - 2024-03-16
 
 ### Changed
