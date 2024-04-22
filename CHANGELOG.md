@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [6.0.0] - 2024-04-22
+
 ### Changed
 
 - [DesktopAnalytics] Changed useExecutingAssembly flag in one of the Analytics constructors to useCallingAssemblyVersion
