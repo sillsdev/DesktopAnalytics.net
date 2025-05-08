@@ -10,6 +10,7 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using JetBrains.Annotations;
@@ -172,9 +173,23 @@ namespace DesktopAnalytics
 			if (AnalyticsSettings.Default.NeedUpgrade)
 			{
 				//see http://stackoverflow.com/questions/3498561/net-applicationsettingsbase-should-i-call-upgrade-every-time-i-load
-				AnalyticsSettings.Default.Upgrade();
-				AnalyticsSettings.Default.NeedUpgrade = false;
-				AnalyticsSettings.Default.Save();
+				try
+				{
+					AnalyticsSettings.Default.Upgrade();
+					AnalyticsSettings.Default.NeedUpgrade = false;
+					TrySaveSettings();
+				}
+				catch (ConfigurationErrorsException e)
+				{
+					try
+					{
+						Console.WriteLine(e);
+					}
+					catch
+					{
+						Debug.WriteLine(e);
+					}
+				}
 			}
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
@@ -195,9 +210,8 @@ namespace DesktopAnalytics
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
-
 				AnalyticsSettings.Default.IdForAnalytics = Guid.NewGuid().ToString();
-				AnalyticsSettings.Default.Save();
+				TrySaveSettings();
 			}
 
 			s_locationInfo = new JsonObject();
@@ -236,7 +250,31 @@ namespace DesktopAnalytics
 			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
 
 			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
-			AnalyticsSettings.Default.Save();
+			TrySaveSettings();
+		}
+
+		private static void TrySaveSettings()
+		{
+			int retryCount = 0;
+			do
+			{
+				try
+				{
+					AnalyticsSettings.Default.Save();
+					return;
+				}
+				catch (Exception e)
+				{
+					try
+					{
+						Console.WriteLine(e);
+					}
+					catch
+					{
+					}
+					Thread.Sleep(300);
+				}
+			} while (++retryCount < 3);
 		}
 
 		private void AttemptToGetUserIdSettingsFromDifferentChannel()
@@ -309,7 +347,7 @@ namespace DesktopAnalytics
 						AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
 						AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
 						AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
-						AnalyticsSettings.Default.Save();
+						TrySaveSettings();
 						return;
 					}
 					catch (Exception)
