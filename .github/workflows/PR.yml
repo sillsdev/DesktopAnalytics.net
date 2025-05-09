@@ -15,18 +15,10 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Install libssl1.1 on Ubuntu
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wget
-        wget http://security.ubuntu.com/ubuntu/pool/main/o/openssl1.1/libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb
-        sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb
-
-    - name: Install .NET Core
-      uses: actions/setup-dotnet@77a48bbb85cd3809790223e895ba4b6cbc110fe8
+    - name: Install .NET SDK
+      uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: 5.0.x
+        dotnet-version: '8.0.x'
 
     - name: Build
       run: dotnet build
