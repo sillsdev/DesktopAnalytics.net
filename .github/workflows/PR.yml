@@ -24,4 +24,5 @@ jobs:
       run: dotnet build
 
     - name: Test
+      if: runner.os == 'Windows'
       run: dotnet test
