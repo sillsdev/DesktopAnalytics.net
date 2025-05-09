@@ -11,7 +11,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_AllFieldsNull_NoChange()
 		{
-			var orig = new UserInfo() { Email = null, FirstName = null, LastName = null, OtherProperties = null };
+			var orig = new UserInfo { Email = null, FirstName = null, LastName = null, OtherProperties = null };
 			var sanitized = orig.CreateSanitized();
 			Assert.IsNull(sanitized.Email);
 			Assert.IsNull(sanitized.FirstName);
@@ -22,7 +22,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_AllFieldsWhitespace_NoChange()
 		{
-			var orig = new UserInfo() { Email = "  ", FirstName = "", LastName = "    ", OtherProperties = new AttributeDictionary() };
+			var orig = new UserInfo { Email = "  ", FirstName = "", LastName = "    ", OtherProperties = new AttributeDictionary() };
 			orig.OtherProperties.Add("   ", " \r\n ");
 			var sanitized = orig.CreateSanitized();
 			Assert.AreEqual("  ", sanitized.Email);
@@ -34,7 +34,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_AllFieldsSingleLetter_FirstNameAndLastNameHashed_NoChagneToOtherFields()
 		{
-			var orig = new UserInfo() { Email = "e", FirstName = "f", LastName = "L", OtherProperties = new AttributeDictionary() };
+			var orig = new UserInfo { Email = "e", FirstName = "f", LastName = "L", OtherProperties = new AttributeDictionary() };
 			orig.OtherProperties.Add("a", "b");
 			var sanitized = orig.CreateSanitized();
 			Assert.AreEqual("e", sanitized.Email);
@@ -48,7 +48,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_NormalData_FirstNameAndLastNameHashed_EmailDomainPreserved()
 		{
-			var orig = new UserInfo() { Email = "Wanda_Finkelstein@gumbyland.org", FirstName = "Wanda", LastName = "Finkelstein", OtherProperties = new AttributeDictionary() };
+			var orig = new UserInfo { Email = "Wanda_Finkelstein@gumbyland.org", FirstName = "Wanda", LastName = "Finkelstein", OtherProperties = new AttributeDictionary() };
 			orig.OtherProperties.Add("Important", "stuff");
 			var sanitized = orig.CreateSanitized();
 			Assert.AreEqual("@gumbyland.org", sanitized.Email);
@@ -64,7 +64,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_InvalidEmailAddressMissingDomain_EmailIsAtSign()
 		{
-			var orig = new UserInfo() { Email = "Buck@", FirstName = "Buck", LastName = "", OtherProperties = new AttributeDictionary() };
+			var orig = new UserInfo { Email = "Buck@", FirstName = "Buck", LastName = "", OtherProperties = new AttributeDictionary() };
 			var sanitized = orig.CreateSanitized();
 			Assert.AreEqual("@", sanitized.Email);
 			Assert.IsTrue(sanitized.FirstName.StartsWith("B"));
@@ -77,7 +77,7 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void CreateSanitized_InvalidEmailAddressMultipleAtSigns_EmailIsEverythingAfterFirstAtSign()
 		{
-			var orig = new UserInfo() { Email = "What@is@this@nonesense@.c.o.m", FirstName = "", LastName = "" };
+			var orig = new UserInfo { Email = "What@is@this@nonesense@.c.o.m", FirstName = "", LastName = "" };
 			var sanitized = orig.CreateSanitized();
 			Assert.AreEqual("@is@this@nonesense@.c.o.m", sanitized.Email);
 			Assert.AreEqual("", sanitized.FirstName);
