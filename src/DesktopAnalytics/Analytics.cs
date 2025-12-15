@@ -220,8 +220,8 @@ namespace DesktopAnalytics
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 			
 			var assembly = assemblyToUseForVersion ?? Assembly.GetEntryAssembly();
-			var versionNumberWithBuild = assembly.GetName().Version?.ToString() ?? "";
-			string versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
+			var versionNumberWithBuild = assembly?.GetName().Version?.ToString() ?? "";
+			var versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
@@ -229,8 +229,16 @@ namespace DesktopAnalytics
 			SetApplicationProperty("OS Version Number", GetOperatingSystemVersionLabel());
 			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
 			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
-
-
+			// This (and "64bit OS" above) really belong in Context, but segment.io doesn't seem
+			// to convey context to Mixpanel in a reliable/predictable form.
+			var ci = CultureInfo.InstalledUICulture;
+			const string invariantCulture = "iv";
+			var installedUICulture = !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
+				ci.TwoLetterISOLanguageName != invariantCulture
+				? ci.TwoLetterISOLanguageName
+				: ci.ThreeLetterISOLanguageName;
+			SetApplicationProperty("DeviceUILanguage", installedUICulture);
+			
 			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
