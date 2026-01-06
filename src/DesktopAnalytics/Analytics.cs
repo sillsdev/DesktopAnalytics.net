@@ -231,7 +231,7 @@ namespace DesktopAnalytics
 			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
 			// This (and "64bit OS" above) really belong in Context, but segment.io doesn't seem
 			// to convey context to Mixpanel in a reliable/predictable form.
-			var ci = CultureInfo.InstalledUICulture;
+			var ci = CultureInfo.CurrentUICulture;
 			const string invariantCulture = "iv";
 			var installedUICulture = !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
 				ci.TwoLetterISOLanguageName != invariantCulture
