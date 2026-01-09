@@ -18,7 +18,7 @@ namespace SampleApp
 
 			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
 			{
-				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecoginzed client type: {args[1]}");
+				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecognized client type: {args[1]}");
 				return 1;
 			}
 
@@ -29,7 +29,8 @@ namespace SampleApp
 				Email="john@example.com",
 				UILanguageCode= "fr"
 			};
-			userInfo.OtherProperties.Add("HowIUseIt","This is a really long explanation of how I use this product to see how much you would be able to extract from Mixpanel.\r\nAnd a second line of it.");
+			userInfo.OtherProperties.Add("HowIUseIt",
+				"This is a really long explanation of how I use this product to see how much you would be able to extract from Mixpanel.\r\nAnd a second line of it.");
 
 			var propsForEveryEvent = new Dictionary<string, string> {{"channel", "beta"}};
 			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent: propsForEveryEvent, clientType: clientType))
