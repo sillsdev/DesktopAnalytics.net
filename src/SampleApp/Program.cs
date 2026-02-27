@@ -44,7 +44,13 @@ namespace SampleApp
 				Debug.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 
-				Analytics.SetApplicationProperty("TimeSinceLaunch", "23 seconds");
+				Analytics.AllowTracking = false;
+				Analytics.Track("Should not be tracked");
+				Debug.WriteLine("Sleeping for 2 seconds just for fun");
+				Thread.Sleep(2000);
+
+				Analytics.AllowTracking = true;
+				Analytics.SetApplicationProperty("TimeSinceLaunch", "25 seconds");
 				Analytics.Track("SomeEvent", new Dictionary<string, string> {{"SomeValue", "42"}});
 				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);

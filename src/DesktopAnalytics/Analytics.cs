@@ -16,6 +16,9 @@ using System.Xml.XPath;
 using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
 using Segment.Serialization;
+using static System.Attribute;
+using static System.Environment;
+using static System.Environment.SpecialFolder;
 using static System.String;
 
 namespace DesktopAnalytics
@@ -37,6 +40,7 @@ namespace DesktopAnalytics
 	public class Analytics : IDisposable
 	{
 		private const string kUserConfigFileName = "user.config";
+		private const int kMaxExceptionReportsPerRun = 10;
 
 		/// <summary>
 		/// Collection of "location"-specific traits about the user. This information is
@@ -51,9 +55,7 @@ namespace DesktopAnalytics
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
-		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
-
-		private readonly IClient Client;
+		private readonly IClient _client;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -100,7 +102,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
-			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
+			_client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
 		}
 
 		/// <summary>
@@ -143,12 +145,12 @@ namespace DesktopAnalytics
 				{
 					var segmentClient = new SegmentClient();
 					segmentClient.Failed += Client_Failed;
-					Client = segmentClient;
+					_client = segmentClient;
 					break;
 				}
 				case ClientType.Mixpanel:
 				{
-					Client = new MixpanelClient();
+					_client = new MixpanelClient();
 					break;
 				}
 				default:
@@ -194,8 +196,8 @@ namespace DesktopAnalytics
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
-				// Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
-				// We really want to use the same ID if possible to keep our statistics valid.
+				// Apparently a first-time installation. If possible, we really want to use the
+				// same ID (from another channel of this app) to keep our statistics valid.
 				try
 				{
 					AttemptToGetUserIdSettingsFromDifferentChannel();
@@ -206,7 +208,7 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Client.Initialize(apiSecret, host, flushAt, flushInterval);
+			_client.Initialize(apiSecret, host, flushAt, flushInterval);
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -227,8 +229,8 @@ namespace DesktopAnalytics
 			SetApplicationProperty("UserName", GetUserNameForEvent());
 			SetApplicationProperty("Browser", GetOperatingSystemLabel());
 			SetApplicationProperty("OS Version Number", GetOperatingSystemVersionLabel());
-			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
-			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
+			SetApplicationProperty("64bit OS", Is64BitOperatingSystem.ToString());
+			SetApplicationProperty("64bit App", Is64BitProcess.ToString());
 			// This (and "64bit OS" above) really belong in Context, but segment.io doesn't seem
 			// to convey context to Mixpanel in a reliable/predictable form.
 			var ci = CultureInfo.CurrentUICulture;
@@ -279,6 +281,7 @@ namespace DesktopAnalytics
 					}
 					catch
 					{
+						// Ignore and retry.
 					}
 					Thread.Sleep(300);
 				}
@@ -375,13 +378,16 @@ namespace DesktopAnalytics
 			if (entryAssembly == null) // Called from unmanaged code?
 				return false;
 			softwareName = Path.GetFileNameWithoutExtension(entryAssembly.Location);
-			AssemblyCompanyAttribute companyAttribute = Attribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-			if (companyAttribute == null || IsNullOrEmpty(softwareName))
+			if (!(GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) is
+				    AssemblyCompanyAttribute companyAttribute) || IsNullOrEmpty(softwareName))
+			{
 				return false;
+			}
+
 			string companyName = companyAttribute.Company;
 			if (companyName == null)
 				return false;
-			settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+			settingsLocation = Path.Combine(GetFolderPath(LocalApplicationData),
 				companyName);
 			return true;
 		}
@@ -427,7 +433,7 @@ namespace DesktopAnalytics
 			catch (ConfigurationErrorsException ex)
 			{
 				// If the user.config file is corrupt then it will throw a ConfigurationErrorsException
-				// Fortunately we can still gets it path from the exception.
+				// Fortunately we can still get its path from the exception.
 				return ex.Filename;
 			}
 		}
@@ -523,26 +529,24 @@ namespace DesktopAnalytics
 		private bool AddGeolocationProperty(JObject j, string primary, string secondary = null)
 		{
 			var value = j.GetValue(primary)?.ToString();
-			if (!IsNullOrWhiteSpace(value))
-			{
-				s_locationInfo.Add(primary, value);
-				_propertiesThatGoWithEveryEvent.Add(primary, value);
-				return true;
-			}
-
-			return secondary != null && AddGeolocationProperty(j, secondary);
+			if (IsNullOrWhiteSpace(value))
+				return secondary != null && AddGeolocationProperty(j, secondary);
+			
+			s_locationInfo.Add(primary, value);
+			_propertiesThatGoWithEveryEvent.Add(primary, value);
+			return true;
 		}
 
-		private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()
-		{
-			using (var client = new WebClient())
-			{
-				var json = client.DownloadString("http://freegeoip.net/json");
-				JObject results = JObject.Parse(json);
-				yield return new KeyValuePair<string, string>("Country", (string)results["country_name"]);
-				yield return new KeyValuePair<string, string>("City", (string)results["city"]);
-			}
-		}
+		//private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()
+		//{
+		//	using (var client = new WebClient())
+		//	{
+		//		var json = client.DownloadString("http://freegeoip.net/json");
+		//		JObject results = JObject.Parse(json);
+		//		yield return new KeyValuePair<string, string>("Country", (string)results["country_name"]);
+		//		yield return new KeyValuePair<string, string>("City", (string)results["city"]);
+		//	}
+		//}
 
 		/// <summary>
 		/// Records an event
@@ -610,12 +614,12 @@ namespace DesktopAnalytics
 
 			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions,
 			// in the background, blowing through our Analytics service limits and getting us kicked off.
-			if (s_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
+			if (s_exceptionCount > kMaxExceptionReportsPerRun)
 			{
 				return;
 			}
 
-			var props = new JsonObject()
+			var props = new JsonObject
 			{
 				{ "Message", e.Message },
 				{ "Stack Trace", e.StackTrace }
@@ -623,9 +627,7 @@ namespace DesktopAnalytics
 			if (moreProperties != null)
 			{
 				foreach (var key in moreProperties.Keys)
-				{
 					props.Add(key, moreProperties[key]);
-				}
 			}
 			TrackWithApplicationProperties("Exception", props);
 		}
@@ -634,31 +636,24 @@ namespace DesktopAnalytics
 		{
 			var prop = new JsonObject();
 			foreach (var key in properties.Keys)
-			{
 				prop.Add(key, properties[key]);
-			}
 			return prop;
-		}
-
-		private static void Client_Succeeded(string action)
-		{
-			Debug.WriteLine($"Analytics action succeeded: {action}");
 		}
 
 		private static void Client_Failed(Exception e)
 		{
-			Debug.WriteLine($"**** Analytics action Failed: {Environment.NewLine}{e.StackTrace}");
+			Debug.WriteLine($"**** Analytics action Failed: {NewLine}{e.StackTrace}");
 		}
 
 		public void Dispose()
 		{
-			Client?.ShutDown();
+			_client?.ShutDown();
 		}
 
 		/// <summary>
 		/// Indicates whether we are tracking or not
 		/// </summary>
-		public static bool AllowTracking { get; private set; }
+		public static bool AllowTracking { get; set; }
 
 		#region OSVersion
 		class Version
@@ -685,7 +680,7 @@ namespace DesktopAnalytics
 
 		private static string GetOperatingSystemLabel()
 		{
-			if (Environment.OSVersion.Platform == PlatformID.Unix)
+			if (OSVersion.Platform == PlatformID.Unix)
 			{
 				return UnixName == "Linux" ? $"{LinuxVersion} / {LinuxDesktop}" : UnixName;
 			}
@@ -705,23 +700,23 @@ namespace DesktopAnalytics
 
 			foreach (var version in list)
 			{
-				if (version.Match(Environment.OSVersion))
-					return version.Label + " " + Environment.OSVersion.ServicePack;
+				if (version.Match(OSVersion))
+					return version.Label + " " + OSVersion.ServicePack;
 			}
 
 			// Handle any as yet unrecognized (possibly unmanifested) versions, or anything that reported its self as Windows 8.
-			if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+			if (OSVersion.Platform == PlatformID.Win32NT)
 			{
-				return GetWindowsVersionInfoFromNetworkAPI() + " " + Environment.OSVersion.ServicePack;
+				return GetWindowsVersionInfoFromNetworkAPI() + " " + OSVersion.ServicePack;
 			}
 
-			return Environment.OSVersion.VersionString;
+			return OSVersion.VersionString;
 		}
 
 
 		private string GetOperatingSystemVersionLabel()
 		{
-			return Environment.OSVersion.Version.ToString();
+			return OSVersion.Version.ToString();
 		}
 
 		#region Windows8PlusVersionReportingSupport
@@ -786,7 +781,7 @@ namespace DesktopAnalytics
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
 				if (s_unixName == null)
 				{
@@ -812,16 +807,16 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private static string _linuxVersion;
+		private static string s_linuxVersion;
 		private static string LinuxVersion
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
-				if (_linuxVersion == null)
+				if (s_linuxVersion == null)
 				{
-					_linuxVersion = Empty;
+					s_linuxVersion = Empty;
 					if (File.Exists("/etc/wasta-release"))
 					{
 						var versionData = File.ReadAllText("/etc/wasta-release");
@@ -830,7 +825,7 @@ namespace DesktopAnalytics
 						{
 							if (line.StartsWith("DESCRIPTION=\""))
 							{
-								_linuxVersion = line.Substring(13).Trim('"');
+								s_linuxVersion = line.Substring(13).Trim('"');
 								break;
 							}
 						}
@@ -843,7 +838,7 @@ namespace DesktopAnalytics
 						{
 							if (t.StartsWith("DISTRIB_DESCRIPTION=\""))
 							{
-								_linuxVersion = t.Substring(21).Trim('"');
+								s_linuxVersion = t.Substring(21).Trim('"');
 								break;
 							}
 						}
@@ -851,10 +846,10 @@ namespace DesktopAnalytics
 					else
 					{
 						// If it's linux, it really should have /etc/lsb-release!
-						_linuxVersion = Environment.OSVersion.VersionString;
+						s_linuxVersion = OSVersion.VersionString;
 					}
 				}
-				return _linuxVersion;
+				return s_linuxVersion;
 			}
 		}
 
@@ -866,15 +861,15 @@ namespace DesktopAnalytics
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					return Environment.OSVersion.Platform.ToString();
+				if (OSVersion.Platform != PlatformID.Unix)
+					return OSVersion.Platform.ToString();
 
 				// see http://unix.stackexchange.com/a/116694
 				// and http://askubuntu.com/a/227669
-				var currentDesktop = Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
+				var currentDesktop = GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
 				if (IsNullOrEmpty(currentDesktop))
 				{
-					var dataDirs = Environment.GetEnvironmentVariable("XDG_DATA_DIRS");
+					var dataDirs = GetEnvironmentVariable("XDG_DATA_DIRS");
 					if (dataDirs != null)
 					{
 						dataDirs = dataDirs.ToLowerInvariant();
@@ -886,7 +881,7 @@ namespace DesktopAnalytics
 							currentDesktop = "Gnome";
 					}
 					if (IsNullOrEmpty(currentDesktop))
-						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? Empty;
+						currentDesktop = GetEnvironmentVariable("GDMSESSION") ?? Empty;
 				}
 				return currentDesktop.ToLowerInvariant();
 			}
@@ -900,25 +895,25 @@ namespace DesktopAnalytics
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
 				if (s_linuxDesktop == null)
 				{
 					// see http://unix.stackexchange.com/a/116694
 					// and http://askubuntu.com/a/227669
 					var currentDesktop = DesktopEnvironment;
-					var mirSession = Environment.GetEnvironmentVariable("MIR_SERVER_NAME");
+					var mirSession = GetEnvironmentVariable("MIR_SERVER_NAME");
 					var additionalInfo = Empty;
 					if (!IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
-					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
+					var gdmSession = GetEnvironmentVariable("GDMSESSION") ?? "not set";
 					s_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
 				}
 				return s_linuxDesktop;
 			}
 		}
 
-		public static Statistics Statistics => s_singleton.Client.Statistics;
+		public static Statistics Statistics => s_singleton._client.Statistics;
 
 		/// <summary>
 		/// All calls to Client.Track should run through here so we can provide defaults for every event
@@ -933,11 +928,10 @@ namespace DesktopAnalytics
 				properties = new JsonObject();
 			foreach (var p in s_singleton._propertiesThatGoWithEveryEvent)
 			{
-				if (properties.ContainsKey(p.Key))
-					properties.Remove(p.Key);
+				properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? Empty);
 			}
-			s_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
+			s_singleton._client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
 		}
 
 		/// <summary>
@@ -951,10 +945,7 @@ namespace DesktopAnalytics
 				throw new ArgumentNullException(key);
 			if (value == null)
 				value = Empty;
-			if (s_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
-			{
-				s_singleton._propertiesThatGoWithEveryEvent.Remove(key);
-			}
+			s_singleton._propertiesThatGoWithEveryEvent.Remove(key);
 			s_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
 		}
 
@@ -967,7 +958,7 @@ namespace DesktopAnalytics
 
 		public static void FlushClient()
 		{
-			s_singleton.Client.Flush();
+			s_singleton._client.Flush();
 		}
 	}
 }
