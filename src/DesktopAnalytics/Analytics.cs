@@ -69,7 +69,7 @@ namespace DesktopAnalytics
 		}
 
 		private readonly IClient _client;
-		private InitializationParameters _deferredInitializationParameters;
+		private volatile InitializationParameters _deferredInitializationParameters;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -108,7 +108,7 @@ namespace DesktopAnalytics
 		{
 		}
 
-		private void UpdateServerInformationOnThisUser()
+		private void UpdateServerInformationOnThisUser(bool initializing = false)
 		{
 			s_traits = new JsonObject
 			{
@@ -125,7 +125,7 @@ namespace DesktopAnalytics
 					s_traits.Add(property.Key, property.Value);
 			}
 
-			if (!AllowTracking)
+			if (!AllowTracking && !initializing)
 				return;
 
 			_client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
@@ -195,8 +195,6 @@ namespace DesktopAnalytics
 
 			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
 
-			s_allowTracking = allowTracking;
-
 			var initializationParameters = new InitializationParameters
 			{
 				ApiSecret = apiSecret,
@@ -211,13 +209,16 @@ namespace DesktopAnalytics
 			if (IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
 				UrlThatReturnsGeolocationJson = "http://ip-api.com/json/";
 
-			if (s_allowTracking)
-				FinishInitialization(initializationParameters);
+			if (allowTracking)
+				Initialize(initializationParameters);
 			else
+			{
+				s_allowTracking = false;
 				_deferredInitializationParameters = initializationParameters;
+			}
 		}
 
-		private void FinishInitialization(InitializationParameters parameters)
+		private void Initialize(InitializationParameters parameters)
 		{
 			// Bring in settings from any previous version.
 			if (AnalyticsSettings.Default.NeedUpgrade)
@@ -271,7 +272,7 @@ namespace DesktopAnalytics
 
 			s_locationInfo = new JsonObject();
 
-			UpdateServerInformationOnThisUser();
+			UpdateServerInformationOnThisUser(true);
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 
 			var assembly = parameters.Assembly;
@@ -290,6 +291,13 @@ namespace DesktopAnalytics
 			var ci = CultureInfo.CurrentUICulture;
 			var installedUICulture = GetInstalledUICultureCode(ci);
 			SetApplicationProperty("DeviceUILanguage", installedUICulture);
+
+			// This method only ever gets called when the client has requested that we allow
+			// tracking. We can set this flag to true now that the client is created and our user
+			// and application properties are initialized. In practice, we hope that no other
+			// tracking events come through before our Created/Upgrade event below, but in the
+			// unlikely event that they do, it's not the end of the world.
+			s_allowTracking = true;
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
@@ -560,8 +568,6 @@ namespace DesktopAnalytics
 
 		private void ReportIpAddressOfThisMachineAsync()
 		{
-			if (!AllowTracking)
-				return;
 			using (var client = new WebClient())
 			{
 				try
@@ -629,17 +635,6 @@ namespace DesktopAnalytics
 			_propertiesThatGoWithEveryEvent.Add(primary, value);
 			return true;
 		}
-
-		//private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()
-		//{
-		//	using (var client = new WebClient())
-		//	{
-		//		var json = client.DownloadString("http://freegeoip.net/json");
-		//		JObject results = JObject.Parse(json);
-		//		yield return new KeyValuePair<string, string>("Country", (string)results["country_name"]);
-		//		yield return new KeyValuePair<string, string>("City", (string)results["city"]);
-		//	}
-		//}
 
 		/// <summary>
 		/// Records an event
@@ -753,15 +748,26 @@ namespace DesktopAnalytics
 			{
 				if (value == s_allowTracking)
 					return;
-				s_allowTracking = value;
-				if (!value)
-					return;
-				var initializationParameters = s_singleton?._deferredInitializationParameters;
-				if (initializationParameters != null)
+
+				// The following is not strictly thread safe because another thread could set this
+				// after the singleton is created but before it checks the flag to decide whether
+				// to complete initialization based on the value of the flag. In practice, the
+				// Analytics object is normally constructed during application startup, before
+				// there is any real chance of multiple threads running.
+				if (value && s_singleton != null)
 				{
-					s_singleton._deferredInitializationParameters = null;
-					s_singleton.FinishInitialization(initializationParameters);
+					var initializationParameters = s_singleton._deferredInitializationParameters;
+					if (initializationParameters != null)
+					{
+						// By clearing these parameters, we reduce the chance that we will try to
+						// initialize twice if multiple threads are setting AllowTracking to true.
+						s_singleton._deferredInitializationParameters = null;
+						s_singleton.Initialize(initializationParameters);
+						return; // Initialize sets s_allowTracking = true
+					}
 				}
+
+				s_allowTracking = value;
 			}
 		}
 
@@ -1019,7 +1025,7 @@ namespace DesktopAnalytics
 			}
 		}
 
-		public static Statistics Statistics => s_singleton._client.Statistics;
+		public static Statistics Statistics => s_singleton._client?.Statistics ?? new Statistics(0, 0, 0);
 
 		/// <summary>
 		/// All calls to Client.Track should run through here so we can provide defaults for every event
@@ -1076,7 +1082,7 @@ namespace DesktopAnalytics
 
 		public static void FlushClient()
 		{
-			s_singleton._client.Flush();
+			s_singleton._client?.Flush();
 		}
 	}
 }
