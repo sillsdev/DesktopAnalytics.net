@@ -275,8 +275,9 @@ namespace DesktopAnalytics
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
 
 			var assembly = parameters.Assembly;
-			var versionNumberWithBuild = assembly?.GetName().Version?.ToString() ?? "";
-			var versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
+			var version = assembly?.GetName().Version;
+			var versionNumberWithBuild = version?.ToString() ?? "";
+			var versionNumber = version == null ? "" : $"{version.Major}.{version.Minor}";
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
@@ -287,11 +288,7 @@ namespace DesktopAnalytics
 			// This (and "64bit OS" above) really belong in Context, but segment.io doesn't seem
 			// to convey context to Mixpanel in a reliable/predictable form.
 			var ci = CultureInfo.CurrentUICulture;
-			const string invariantCulture = "iv";
-			var installedUICulture = !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
-				ci.TwoLetterISOLanguageName != invariantCulture
-				? ci.TwoLetterISOLanguageName
-				: ci.ThreeLetterISOLanguageName;
+			var installedUICulture = GetInstalledUICultureCode(ci);
 			SetApplicationProperty("DeviceUILanguage", installedUICulture);
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
@@ -396,7 +393,7 @@ namespace DesktopAnalytics
 							new FileInfo(firstConfigPath).LastWriteTimeUtc
 						);
 					});
-				
+
 				foreach (var folder in possibleFolders)
 				{
 					try
@@ -512,8 +509,17 @@ namespace DesktopAnalytics
 			}
 		}
 
+		internal static string GetInstalledUICultureCode(CultureInfo ci)
+		{
+			const string invariantCulture = "iv";
+			return !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
+				ci.TwoLetterISOLanguageName != invariantCulture
+				? ci.TwoLetterISOLanguageName
+				: ci.ThreeLetterISOLanguageName;
+		}
+
 		// If the specified setting's current value is empty, try to extract it from the document.
-		private static string ExtractSetting(string current, XDocument doc, string name)
+		internal static string ExtractSetting(string current, XDocument doc, string name)
 		{
 			if (!IsNullOrEmpty(current))
 				return current;
@@ -1028,13 +1034,13 @@ namespace DesktopAnalytics
 
 			if (properties == null)
 				properties = new JsonObject();
-			
+
 			foreach (var p in s_singleton._propertiesThatGoWithEveryEvent)
 			{
 				properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? Empty);
 			}
-			
+
 			s_singleton._client.Track(
 				AnalyticsSettings.Default.IdForAnalytics,
 				eventName,
