@@ -19,6 +19,7 @@ using Segment.Serialization;
 using static System.Attribute;
 using static System.Environment;
 using static System.Environment.SpecialFolder;
+using static System.Reflection.Assembly;
 using static System.String;
 
 namespace DesktopAnalytics
@@ -55,7 +56,17 @@ namespace DesktopAnalytics
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
+		private class InitializationParameters
+		{
+			public string ApiSecret;
+			public string Host;
+			public int FlushAt;
+			public int FlushInterval;
+			public Assembly Assembly;
+		}
+
 		private readonly IClient _client;
+		private InitializationParameters _deferredInitializationParameters;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -79,7 +90,6 @@ namespace DesktopAnalytics
 			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host,
 				assemblyToUseForVersion:useCallingAssemblyVersion ? Assembly.GetCallingAssembly() : null)
 		{
-
 		}
 
 		private void UpdateServerInformationOnThisUser()
@@ -132,6 +142,7 @@ namespace DesktopAnalytics
 			bool retainPii = false, ClientType clientType = ClientType.Segment,
 			string host = null, int flushAt = -1, int flushInterval = -1,
 			Assembly assemblyToUseForVersion = null)
+		)
 		{
 			if (s_singleton != null)
 			{
@@ -162,16 +173,31 @@ namespace DesktopAnalytics
 
 			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
 
-			AllowTracking = allowTracking;
+			s_allowTracking = allowTracking;
 
-			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
+			var initializationParameters = new InitializationParameters
+			{
+				ApiSecret = apiSecret,
+				Host = host,
+				FlushAt = flushAt,
+				FlushInterval = flushInterval,
+				Assembly = assemblyToUseForVersion ?? GetEntryAssembly(),
+			};
+
+			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is
+			// called, so don't mess with it if the client has given us a different URL.
 			if (IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
 				UrlThatReturnsGeolocationJson = "http://ip-api.com/json/";
 
-			if (!AllowTracking)
-				return;
+			if (s_allowTracking)
+				FinishInitialization(initializationParameters);
+			else
+				_deferredInitializationParameters = initializationParameters;
+		}
 
-			//bring in settings from any previous version
+		private void FinishInitialization(InitializationParameters parameters)
+		{
+			// Bring in settings from any previous version.
 			if (AnalyticsSettings.Default.NeedUpgrade)
 			{
 				//see http://stackoverflow.com/questions/3498561/net-applicationsettingsbase-should-i-call-upgrade-every-time-i-load
@@ -208,7 +234,12 @@ namespace DesktopAnalytics
 				}
 			}
 
-			_client.Initialize(apiSecret, host, flushAt, flushInterval);
+			_client.Initialize(
+				parameters.ApiSecret,
+				parameters.Host,
+				parameters.FlushAt,
+				parameters.FlushInterval
+			);
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -220,8 +251,8 @@ namespace DesktopAnalytics
 
 			UpdateServerInformationOnThisUser();
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
-			
-			var assembly = assemblyToUseForVersion ?? Assembly.GetEntryAssembly();
+
+			var assembly = parameters.Assembly;
 			var versionNumberWithBuild = assembly?.GetName().Version?.ToString() ?? "";
 			var versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
 			SetApplicationProperty("Version", versionNumber);
@@ -240,7 +271,7 @@ namespace DesktopAnalytics
 				? ci.TwoLetterISOLanguageName
 				: ci.ThreeLetterISOLanguageName;
 			SetApplicationProperty("DeviceUILanguage", installedUICulture);
-			
+
 			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
 				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
@@ -331,15 +362,15 @@ namespace DesktopAnalytics
 				}
 
 				possibleFolders.Sort((first, second) =>
-				{
-					if (first == second)
-						return 0;
+					{
+						if (first == second)
+							return 0;
 					var firstConfigPath = Path.Combine(first, kUserConfigFileName);
 					var secondConfigPath = Path.Combine(second, kUserConfigFileName);
-					// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
-					// That is, we end up with the most recently modified user.config first.
+						// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
+						// That is, we end up with the most recently modified user.config first.
 					return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
-				});
+					});
 				foreach (var folder in possibleFolders)
 				{
 					try
@@ -477,6 +508,8 @@ namespace DesktopAnalytics
 
 		private void ReportIpAddressOfThisMachineAsync()
 		{
+			if (!AllowTracking)
+				return;
 			using (var client = new WebClient())
 			{
 				try
@@ -531,7 +564,7 @@ namespace DesktopAnalytics
 			var value = j.GetValue(primary)?.ToString();
 			if (IsNullOrWhiteSpace(value))
 				return secondary != null && AddGeolocationProperty(j, secondary);
-			
+
 			s_locationInfo.Add(primary, value);
 			_propertiesThatGoWithEveryEvent.Add(primary, value);
 			return true;
@@ -653,7 +686,26 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// Indicates whether we are tracking or not
 		/// </summary>
-		public static bool AllowTracking { get; set; }
+		public static bool AllowTracking
+		{
+			get => s_allowTracking;
+			set
+			{
+				if (value == s_allowTracking)
+					return;
+				s_allowTracking = value;
+				if (!value)
+					return;
+				var initializationParameters = s_singleton?._deferredInitializationParameters;
+				if (initializationParameters != null)
+				{
+					s_singleton._deferredInitializationParameters = null;
+					s_singleton.FinishInitialization(initializationParameters);
+				}
+			}
+		}
+
+		private static bool s_allowTracking;
 
 		#region OSVersion
 		class Version
@@ -763,7 +815,7 @@ namespace DesktopAnalytics
 			}
 			else if (info._majorVersion == 10 && info._minorVersion == 0)
 			{
-				windowsVersion = "Windows 10"; 
+				windowsVersion = "Windows 10";
 			}
 			else
 			{
@@ -828,27 +880,27 @@ namespace DesktopAnalytics
 								s_linuxVersion = line.Substring(13).Trim('"');
 								break;
 							}
-						}
-					}
+			}
+		}
 					else if (File.Exists("/etc/lsb-release"))
-					{
+		{
 						var versionData = File.ReadAllText("/etc/lsb-release");
 						var versionLines = versionData.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 						foreach (var t in versionLines)
-						{
+			{
 							if (t.StartsWith("DISTRIB_DESCRIPTION=\""))
-							{
+			{
 								s_linuxVersion = t.Substring(21).Trim('"');
 								break;
 							}
 						}
 					}
 					else
-					{
+				{
 						// If it's linux, it really should have /etc/lsb-release!
 						s_linuxVersion = OSVersion.VersionString;
-					}
 				}
+			}
 				return s_linuxVersion;
 			}
 		}
