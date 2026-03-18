@@ -14,7 +14,7 @@ namespace SampleAppWithForm
 		[STAThread]
 		static int Main(string[] args)
 		{
-			if (args.Length != 2)
+			if (args.Length < 2 || args.Length > 4)
 			{
 				Console.WriteLine("Usage: SampleApp <analyticsApiSecret> <clientType e.g.(Segment|Mixpanel|???)> {-q:maxQueuedEvents} {-f:flushInterval}");
 				return 1;
@@ -39,9 +39,9 @@ namespace SampleAppWithForm
 
 			var propertiesThatGoWithEveryEvent = new Dictionary<string, string> { { "channel", "beta" } };
 
-			if (!int.TryParse(args.Skip(1).SingleOrDefault(a => a.StartsWith("-q:"))?.Substring(2), out var flushAt))
+			if (!int.TryParse(args.Skip(2).SingleOrDefault(a => a.StartsWith("-q:"))?.Substring(3), out var flushAt))
 				flushAt = -1;
-			if (!int.TryParse(args.Skip(1).SingleOrDefault(a => a.StartsWith("-f:"))?.Substring(2), out var flushInterval))
+			if (!int.TryParse(args.Skip(2).SingleOrDefault(a => a.StartsWith("-f:"))?.Substring(3), out var flushInterval))
 				flushInterval = -1;
 
 			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent, clientType: clientType, flushAt: flushAt,
