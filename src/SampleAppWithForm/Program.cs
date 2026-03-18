@@ -22,7 +22,7 @@ namespace SampleAppWithForm
 
 			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
 			{
-				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecoginzed client type: {args[1]}");
+				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecognized client type: {args[1]}");
 				return 1;
 			}
 
