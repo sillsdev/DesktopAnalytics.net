@@ -16,6 +16,13 @@ using System.Xml.XPath;
 using JetBrains.Annotations;
 using Newtonsoft.Json.Linq;
 using Segment.Serialization;
+using static System.Attribute;
+using static System.Configuration.ConfigurationUserLevel;
+using static System.Environment;
+using static System.Environment.SpecialFolder;
+using static System.IO.Directory;
+using static System.IO.Path;
+using static System.Reflection.Assembly;
 using static System.String;
 
 namespace DesktopAnalytics
@@ -37,6 +44,7 @@ namespace DesktopAnalytics
 	public class Analytics : IDisposable
 	{
 		private const string kUserConfigFileName = "user.config";
+		private const int kMaxExceptionReportsPerRun = 10;
 
 		/// <summary>
 		/// Collection of "location"-specific traits about the user. This information is
@@ -51,9 +59,17 @@ namespace DesktopAnalytics
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
-		const int MAX_EXCEPTION_REPORTS_PER_RUN = 10;
+		private class InitializationParameters
+		{
+			public string ApiSecret;
+			public string Host;
+			public int FlushAt;
+			public int FlushInterval;
+			public Assembly Assembly;
+		}
 
-		private readonly IClient Client;
+		private readonly IClient _client;
+		private volatile InitializationParameters _deferredInitializationParameters;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -72,15 +88,27 @@ namespace DesktopAnalytics
 		/// assembly to get version information. (GetEntryAssembly is null for MAF plugins.)
 		/// </param>
 		[PublicAPI]
-		public Analytics(string apiSecret, UserInfo userInfo, bool allowTracking = true,
-			bool retainPii = false, ClientType clientType = ClientType.Segment, string host = null, bool useCallingAssemblyVersion = false)
-			: this(apiSecret, userInfo, new Dictionary<string, string>(), allowTracking, retainPii, clientType, host,
-				assemblyToUseForVersion:useCallingAssemblyVersion ? Assembly.GetCallingAssembly() : null)
+		public Analytics(
+			string apiSecret,
+			UserInfo userInfo,
+			bool allowTracking = true,
+			bool retainPii = false,
+			ClientType clientType = ClientType.Segment,
+			string host = null,
+			bool useCallingAssemblyVersion = false) : this(
+				apiSecret,
+				userInfo,
+				new Dictionary<string, string>(),
+				allowTracking,
+				retainPii,
+				clientType,
+				host,
+				assemblyToUseForVersion: useCallingAssemblyVersion ? GetCallingAssembly() : null
+			)
 		{
-
 		}
 
-		private void UpdateServerInformationOnThisUser()
+		private void UpdateServerInformationOnThisUser(bool initializing = false)
 		{
 			s_traits = new JsonObject
 			{
@@ -97,20 +125,20 @@ namespace DesktopAnalytics
 					s_traits.Add(property.Key, property.Value);
 			}
 
-			if (!AllowTracking)
+			if (!AllowTracking && !initializing)
 				return;
 
-			Client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
+			_client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
 		}
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
 		/// </summary>
 		/// <param name="apiSecret">The segment.com apiSecret</param>
-		/// <param name="userInfo">Information about the user that you have previous collected</param>
+		/// <param name="userInfo">Information about the user that you have previously collected</param>
 		/// <param name="propertiesThatGoWithEveryEvent">A set of key-value pairs to send with
 		/// *every* event</param>
-		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
+		/// <param name="allowTracking">If false, prevents communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent
 		/// communication of personally identifiable information to the analytics server.</param>
 		/// <param name="clientType"><see cref="ClientType"/></param>
@@ -125,11 +153,18 @@ namespace DesktopAnalytics
 		/// program, pass a specific assembly to use as the basis for getting the version
 		/// information. (Note: GetEntryAssembly is null for MAF plugins.)
 		/// </param>
-		public Analytics(string apiSecret, UserInfo userInfo, Dictionary<string,
-			string> propertiesThatGoWithEveryEvent, bool allowTracking = true,
-			bool retainPii = false, ClientType clientType = ClientType.Segment,
-			string host = null, int flushAt = -1, int flushInterval = -1,
-			Assembly assemblyToUseForVersion = null)
+		public Analytics(
+			string apiSecret,
+			UserInfo userInfo,
+			Dictionary<string, string> propertiesThatGoWithEveryEvent,
+			bool allowTracking = true,
+			bool retainPii = false,
+			ClientType clientType = ClientType.Segment,
+			string host = null,
+			int flushAt = -1,
+			int flushInterval = -1,
+			Assembly assemblyToUseForVersion = null
+		)
 		{
 			if (s_singleton != null)
 			{
@@ -143,12 +178,12 @@ namespace DesktopAnalytics
 				{
 					var segmentClient = new SegmentClient();
 					segmentClient.Failed += Client_Failed;
-					Client = segmentClient;
+					_client = segmentClient;
 					break;
 				}
 				case ClientType.Mixpanel:
 				{
-					Client = new MixpanelClient();
+					_client = new MixpanelClient();
 					break;
 				}
 				default:
@@ -160,16 +195,32 @@ namespace DesktopAnalytics
 
 			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
 
-			AllowTracking = allowTracking;
+			var initializationParameters = new InitializationParameters
+			{
+				ApiSecret = apiSecret,
+				Host = host,
+				FlushAt = flushAt,
+				FlushInterval = flushInterval,
+				Assembly = assemblyToUseForVersion ?? GetEntryAssembly(),
+			};
 
-			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is called, so don't mess with it if the client has given us a different url to us
+			// UrlThatReturnsExternalIpAddress is a static and should really be set before this is
+			// called, so don't mess with it if the client has given us a different URL.
 			if (IsNullOrEmpty(UrlThatReturnsExternalIpAddress))
 				UrlThatReturnsGeolocationJson = "http://ip-api.com/json/";
 
-			if (!AllowTracking)
-				return;
+			if (allowTracking)
+				Initialize(initializationParameters);
+			else
+			{
+				s_allowTracking = false;
+				_deferredInitializationParameters = initializationParameters;
+			}
+		}
 
-			//bring in settings from any previous version
+		private void Initialize(InitializationParameters parameters)
+		{
+			// Bring in settings from any previous version.
 			if (AnalyticsSettings.Default.NeedUpgrade)
 			{
 				//see http://stackoverflow.com/questions/3498561/net-applicationsettingsbase-should-i-call-upgrade-every-time-i-load
@@ -194,8 +245,8 @@ namespace DesktopAnalytics
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
-				// Apparently a first-time install. Any chance we can migrate settings from another channel of this app?
-				// We really want to use the same ID if possible to keep our statistics valid.
+				// Apparently a first-time installation. If possible, we really want to use the
+				// same ID (from another channel of this app) to keep our statistics valid.
 				try
 				{
 					AttemptToGetUserIdSettingsFromDifferentChannel();
@@ -206,7 +257,12 @@ namespace DesktopAnalytics
 				}
 			}
 
-			Client.Initialize(apiSecret, host, flushAt, flushInterval);
+			_client.Initialize(
+				parameters.ApiSecret,
+				parameters.Host,
+				parameters.FlushAt,
+				parameters.FlushInterval
+			);
 
 			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
 			{
@@ -216,33 +272,38 @@ namespace DesktopAnalytics
 
 			s_locationInfo = new JsonObject();
 
-			UpdateServerInformationOnThisUser();
+			UpdateServerInformationOnThisUser(true);
 			ReportIpAddressOfThisMachineAsync(); //this will take a while and may fail, so just do it when/if we can
-			
-			var assembly = assemblyToUseForVersion ?? Assembly.GetEntryAssembly();
-			var versionNumberWithBuild = assembly?.GetName().Version?.ToString() ?? "";
-			var versionNumber = versionNumberWithBuild.Split('.').Take(2).Aggregate((a, b) => a + "." + b);
+
+			var assembly = parameters.Assembly;
+			var version = assembly?.GetName().Version;
+			var versionNumberWithBuild = version?.ToString() ?? "";
+			var versionNumber = version == null ? "" : $"{version.Major}.{version.Minor}";
 			SetApplicationProperty("Version", versionNumber);
 			SetApplicationProperty("FullVersion", versionNumberWithBuild);
 			SetApplicationProperty("UserName", GetUserNameForEvent());
 			SetApplicationProperty("Browser", GetOperatingSystemLabel());
 			SetApplicationProperty("OS Version Number", GetOperatingSystemVersionLabel());
-			SetApplicationProperty("64bit OS", Environment.Is64BitOperatingSystem.ToString());
-			SetApplicationProperty("64bit App", Environment.Is64BitProcess.ToString());
+			SetApplicationProperty("64bit OS", Is64BitOperatingSystem.ToString());
+			SetApplicationProperty("64bit App", Is64BitProcess.ToString());
 			// This (and "64bit OS" above) really belong in Context, but segment.io doesn't seem
 			// to convey context to Mixpanel in a reliable/predictable form.
 			var ci = CultureInfo.CurrentUICulture;
-			const string invariantCulture = "iv";
-			var installedUICulture = !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
-				ci.TwoLetterISOLanguageName != invariantCulture
-				? ci.TwoLetterISOLanguageName
-				: ci.ThreeLetterISOLanguageName;
+			var installedUICulture = GetInstalledUICultureCode(ci);
 			SetApplicationProperty("DeviceUILanguage", installedUICulture);
-			
+
+			// This method only ever gets called when the client has requested that we allow
+			// tracking. We can set this flag to true now that the client is created and our user
+			// and application properties are initialized. In practice, we hope that no other
+			// tracking events come through before our Created/Upgrade event below, but in the
+			// unlikely event that they do, it's not the end of the world.
+			s_allowTracking = true;
+
 			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
 			{
-				//"Created" is a special property that segment.io understands and coverts to equivalents in various analytics services
-				//So it's not as descriptive for us as "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
+				// "Created" is a special property that segment.io understands and coverts to
+				// equivalents in various analytics services. So it's not as descriptive for us as
+				// "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
 				TrackWithApplicationProperties("Created");
 			}
 			else if (AnalyticsSettings.Default.LastVersionLaunched != versionNumberWithBuild)
@@ -253,8 +314,8 @@ namespace DesktopAnalytics
 				});
 			}
 
-			// We want to record the launch event independent of whether we also recorded a special first launch
-			// But that is done after we retrieve (or fail to retrieve) our external ip address.
+			// We want to record the launch event even if we also recorded a special first launch,
+			// but that is done after we retrieve (or fail to retrieve) our external IP address.
 			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
 
 			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
@@ -279,6 +340,7 @@ namespace DesktopAnalytics
 					}
 					catch
 					{
+						// Ignore and retry.
 					}
 					Thread.Sleep(300);
 				}
@@ -287,13 +349,15 @@ namespace DesktopAnalytics
 
 		private void AttemptToGetUserIdSettingsFromDifferentChannel()
 		{
-			// We need to get the company name and exe name of the main application, without introducing a dependency on
-			// Windows.Forms, so we can't use the Windows.Forms.Application methods. For maximum robustness, we try two
-			// different approaches.
-			// REVIEW: The first approach will NOT work for plugins or calls from unmanaged code, but for maximum
-			// compatibility (to keep from breaking Bloom), we try it first. If it fails, we try the second approach,
-			// which should work for everyone (though until there is a plugin that supports channels, it will presumably
-			// never actually find a pre-existing config file from a different channel).
+			// We need to get the company name and exe name of the main application, without
+			// introducing a dependency on Windows.Forms, so we can't use the
+			// Windows.Forms.Application methods. For maximum robustness, we try two different
+			// approaches.
+			// REVIEW: The first approach will NOT work for plugins or calls from unmanaged code,
+			// but for maximum compatibility (to keep from breaking Bloom), we try it first. If it
+			// fails, we try the second approach, which should work for everyone (though until
+			// there is a plugin that supports channels, it will presumably never actually find a
+			// pre-existing config file from a different channel).
 
 			for (int attempt = 0; attempt < 2; attempt++)
 			{
@@ -301,12 +365,12 @@ namespace DesktopAnalytics
 				string softwareName;
 				if (attempt == 0)
 				{
-					if (!TryGetSettingsLocationInfoFromEntryAssembly(out settingsLocation, out softwareName))
+					if (!TryGetSettingsLocationFromEntryAssembly(out settingsLocation, out softwareName))
 						continue;
 				}
 				else
 				{
-					if (!TryGetDefaultSettingsLocationInfo(out settingsLocation, out softwareName))
+					if (!TryGetDefaultSettingsLocation(out settingsLocation, out softwareName))
 						return;
 				}
 
@@ -320,83 +384,104 @@ namespace DesktopAnalytics
 				var index = Math.Min(5, softwareName.Length);
 				var prefix = softwareName.Substring(0, index);
 				var pattern = prefix + "*";
-				var possibleParentFolders = Directory.GetDirectories(settingsLocation, pattern);
+				var possibleParentFolders = GetDirectories(settingsLocation, pattern);
 				var possibleFolders = new List<string>();
 				foreach (var folder in possibleParentFolders)
-				{
-					possibleFolders.AddRange(Directory.GetDirectories(folder).Where(f => File.Exists(Path.Combine(f, kUserConfigFileName))));
-				}
+					possibleFolders.AddRange(GetDirectories(folder).Where(f => File.Exists(Combine(f, kUserConfigFileName))));
 
 				possibleFolders.Sort((first, second) =>
-				{
-					if (first == second)
-						return 0;
-					var firstConfigPath = Path.Combine(first, kUserConfigFileName);
-					var secondConfigPath = Path.Combine(second, kUserConfigFileName);
-					// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
-					// That is, we end up with the most recently modified user.config first.
-					return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(new FileInfo(firstConfigPath).LastWriteTimeUtc);
-				});
+					{
+						if (first == second)
+							return 0;
+						var firstConfigPath = Combine(first, kUserConfigFileName);
+						var secondConfigPath = Combine(second, kUserConfigFileName);
+						// Reversing the arguments like this means that second comes before first if it has a LARGER mod time.
+						// That is, we end up with the most recently modified user.config first.
+						return new FileInfo(secondConfigPath).LastWriteTimeUtc.CompareTo(
+							new FileInfo(firstConfigPath).LastWriteTimeUtc
+						);
+					});
+
 				foreach (var folder in possibleFolders)
 				{
 					try
 					{
-						var doc = XDocument.Load(Path.Combine(folder, kUserConfigFileName));
-						var idSetting =
-							doc.XPathSelectElement(
-								"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']");
+						var doc = XDocument.Load(Combine(folder, kUserConfigFileName));
+						var idSetting = doc.XPathSelectElement(
+							"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='IdForAnalytics']"
+						);
 						if (idSetting == null)
 							continue;
 						string analyticsId = idSetting.Value;
 						if (IsNullOrEmpty(analyticsId))
 							continue;
 						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
-						AnalyticsSettings.Default.FirstName = ExtractSetting(AnalyticsSettings.Default.FirstName, doc, "FirstName");
-						AnalyticsSettings.Default.LastName = ExtractSetting(AnalyticsSettings.Default.LastName, doc, "LastName");
-						AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(AnalyticsSettings.Default.LastVersionLaunched, doc, "LastVersionLaunched");
-						AnalyticsSettings.Default.Email = ExtractSetting(AnalyticsSettings.Default.Email, doc, "Email");
+						AnalyticsSettings.Default.FirstName = ExtractSetting(
+							AnalyticsSettings.Default.FirstName,
+							doc,
+							"FirstName"
+						);
+						AnalyticsSettings.Default.LastName = ExtractSetting(
+							AnalyticsSettings.Default.LastName,
+							doc,
+							"LastName"
+						);
+						AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(
+							AnalyticsSettings.Default.LastVersionLaunched,
+							doc,
+							"LastVersionLaunched"
+						);
+						AnalyticsSettings.Default.Email = ExtractSetting(
+							AnalyticsSettings.Default.Email,
+							doc,
+							"Email"
+						);
 						TrySaveSettings();
 						return;
 					}
 					catch (Exception)
 					{
-						// If anything goes wrong we just won't try to get our ID from this source.
+						// If anything goes wrong, skip trying to get our ID from this source.
 					}
 				}
 			}
 		}
 
-		private bool TryGetSettingsLocationInfoFromEntryAssembly(out string settingsLocation, out string softwareName)
+		private static bool TryGetSettingsLocationFromEntryAssembly(out string settingsLocation,
+			out string softwareName
+		)
 		{
 			settingsLocation = null;
 			softwareName = null;
 
-			var entryAssembly = Assembly.GetEntryAssembly(); // the main exe assembly
+			var entryAssembly = GetEntryAssembly(); // the main exe assembly
 			if (entryAssembly == null) // Called from unmanaged code?
 				return false;
-			softwareName = Path.GetFileNameWithoutExtension(entryAssembly.Location);
-			AssemblyCompanyAttribute companyAttribute = Attribute.GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
-			if (companyAttribute == null || IsNullOrEmpty(softwareName))
+			softwareName = GetFileNameWithoutExtension(entryAssembly.Location);
+			if (!(GetCustomAttribute(entryAssembly, typeof(AssemblyCompanyAttribute)) is
+				    AssemblyCompanyAttribute companyAttribute) || IsNullOrEmpty(softwareName))
+			{
 				return false;
+			}
+
 			string companyName = companyAttribute.Company;
 			if (companyName == null)
 				return false;
-			settingsLocation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-				companyName);
+			settingsLocation = Combine(GetFolderPath(LocalApplicationData), companyName);
 			return true;
 		}
 
-		private bool TryGetDefaultSettingsLocationInfo(out string settingsLocation, out string softwareName)
+		private static bool TryGetDefaultSettingsLocation(out string settingsLocation, out string softwareName)
 		{
 			settingsLocation = null;
 			softwareName = null;
 			try
 			{
 				var userConfigPath = GetUserConfigPath();
-				if (Path.GetFileName(userConfigPath) != kUserConfigFileName)
+				if (GetFileName(userConfigPath) != kUserConfigFileName)
 					return false;
-				userConfigPath = Path.GetDirectoryName(Path.GetDirectoryName(userConfigPath)); // strip file name and last folder level
-				softwareName = Path.GetFileName(userConfigPath); // This is actually a folder, not a file.
+				userConfigPath = GetDirectoryName(GetDirectoryName(userConfigPath)); // strip file name and last folder level
+				softwareName = GetFileName(userConfigPath); // This is actually a folder, not a file.
 				if (softwareName == null)
 					return false;
 				int i = softwareName.IndexOf(".exe", StringComparison.Ordinal);
@@ -408,7 +493,7 @@ namespace DesktopAnalytics
 					if (i > 0)
 						softwareName = softwareName.Substring(0, i);
 				}
-				settingsLocation = Path.GetDirectoryName(userConfigPath); // strip product folder
+				settingsLocation = GetDirectoryName(userConfigPath); // strip product folder
 
 				return true;
 			}
@@ -418,35 +503,43 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private string GetUserConfigPath()
+		private static string GetUserConfigPath()
 		{
 			try
 			{
-				return ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.PerUserRoamingAndLocal).FilePath;
+				return ConfigurationManager.OpenExeConfiguration(PerUserRoamingAndLocal).FilePath;
 			}
 			catch (ConfigurationErrorsException ex)
 			{
 				// If the user.config file is corrupt then it will throw a ConfigurationErrorsException
-				// Fortunately we can still gets it path from the exception.
+				// Fortunately we can still get its path from the exception.
 				return ex.Filename;
 			}
 		}
 
+		internal static string GetInstalledUICultureCode(CultureInfo ci)
+		{
+			const string invariantCulture = "iv";
+			return !IsNullOrEmpty(ci.TwoLetterISOLanguageName) &&
+				ci.TwoLetterISOLanguageName != invariantCulture
+				? ci.TwoLetterISOLanguageName
+				: ci.ThreeLetterISOLanguageName;
+		}
+
 		// If the specified setting's current value is empty, try to extract it from the document.
-		private string ExtractSetting(string current, XDocument doc, string name)
+		internal static string ExtractSetting(string current, XDocument doc, string name)
 		{
 			if (!IsNullOrEmpty(current))
 				return current;
-			var setting =
-				doc.XPathSelectElement(
-					"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='" + name + "']");
-			if (setting == null)
-				return "";
-			return setting.Value;
+			var setting = doc.XPathSelectElement(
+				$"configuration/userSettings/DesktopAnalytics.AnalyticsSettings/setting[@name='{name}']"
+			);
+			return setting?.Value ?? "";
 		}
 
 		/// <summary>
-		/// Use this after showing a registration dialog, so that this stuff is sent right away, rather than the next time you start up Analytics
+		/// Use this after showing a registration dialog, so that this stuff is sent right away,
+		/// rather than the next time you start up Analytics
 		/// </summary>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
@@ -456,16 +549,20 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Override this if you want your analytics to report an actual IP address to the server (which could be considered PII), rather than
-		/// just the general geolocation info. The service should simply return a page with a body containing the ip address alone.
+		/// Override this if you want your analytics to report an actual IP address to the server
+		/// (which could be considered PII), rather than just the general geolocation info. The
+		/// service should simply return a page with a body containing the ip address alone.
 		/// </summary>
-		/// <remarks>This used to default to "http://icanhazip.com"; //formerly: "http://ipecho.net/plain" (that URL went down, but is now back up)</remarks>
+		/// <remarks>This used to default to "http://icanhazip.com";
+		/// formerly: "http://ipecho.net/plain" (that URL went down, but is now back up)</remarks>
 		public static string UrlThatReturnsExternalIpAddress { get; set; }
+
 		/// <summary>
-		/// Override this for any reason you like, including if the built-in one ( http://ip-api.com/json/) stops working some day.
-		/// This will be ignored if <seealso cref="UrlThatReturnsExternalIpAddress"/> is set.
-		/// The service should return json that contains values for one or more of the following names: city, country, countryCode,
-		/// region, regionName.
+		/// Override this for any reason you like, including if the built-in one
+		/// (http://ip-api.com/json/) stops working some day. This will be ignored if
+		/// <see cref="UrlThatReturnsExternalIpAddress"/> is set. The service should return json
+		/// that contains values for one or more of the following names: city, country,
+		/// countryCode, region, regionName.
 		/// </summary>
 		public static string UrlThatReturnsGeolocationJson { get; set; }
 
@@ -475,12 +572,20 @@ namespace DesktopAnalytics
 			{
 				try
 				{
-					var useGeoLocation = IsNullOrEmpty(UrlThatReturnsExternalIpAddress);
-					Uri.TryCreate(useGeoLocation ? UrlThatReturnsGeolocationJson : UrlThatReturnsExternalIpAddress,
-						UriKind.Absolute, out var uri);
+					var url = UrlThatReturnsExternalIpAddress;
+					var useGeoLocation = IsNullOrEmpty(url);
+					if (useGeoLocation)
+						url = UrlThatReturnsGeolocationJson;
+					Uri.TryCreate(url, UriKind.Absolute, out var uri);
 					client.DownloadDataCompleted += (sender, e) =>
 					{
-						var launchProperties = new JsonObject { { "installedUiLangId", CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName } };
+						var launchProperties = new JsonObject
+						{
+							{
+								"installedUiLangId",
+								CultureInfo.InstalledUICulture.ThreeLetterISOLanguageName
+							},
+						};
 
 						try
 						{
@@ -502,8 +607,9 @@ namespace DesktopAnalytics
 						}
 						catch (Exception)
 						{
-							// We get here when the user isn't online, or anything else prevents us from getting
-							// their IP address or location. Still worth reporting the launch in the latter case.
+							// We get here when the user isn't online, or anything else prevents us
+							// from getting their IP address or location. Still worth reporting the
+							// launch in the latter case.
 							TrackWithApplicationProperties("Launch", launchProperties);
 							return;
 						}
@@ -511,7 +617,6 @@ namespace DesktopAnalytics
 						TrackWithApplicationProperties("Launch", launchProperties);
 					};
 					client.DownloadDataAsync(uri);
-
 				}
 				catch (Exception)
 				{
@@ -523,25 +628,12 @@ namespace DesktopAnalytics
 		private bool AddGeolocationProperty(JObject j, string primary, string secondary = null)
 		{
 			var value = j.GetValue(primary)?.ToString();
-			if (!IsNullOrWhiteSpace(value))
-			{
-				s_locationInfo.Add(primary, value);
-				_propertiesThatGoWithEveryEvent.Add(primary, value);
-				return true;
-			}
+			if (IsNullOrWhiteSpace(value))
+				return secondary != null && AddGeolocationProperty(j, secondary);
 
-			return secondary != null && AddGeolocationProperty(j, secondary);
-		}
-
-		private IEnumerable<KeyValuePair<string, string>> GetLocationPropertiesOfThisMachine()
-		{
-			using (var client = new WebClient())
-			{
-				var json = client.DownloadString("http://freegeoip.net/json");
-				JObject results = JObject.Parse(json);
-				yield return new KeyValuePair<string, string>("Country", (string)results["country_name"]);
-				yield return new KeyValuePair<string, string>("City", (string)results["city"]);
-			}
+			s_locationInfo.Add(primary, value);
+			_propertiesThatGoWithEveryEvent.Add(primary, value);
+			return true;
 		}
 
 		/// <summary>
@@ -610,12 +702,12 @@ namespace DesktopAnalytics
 
 			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions,
 			// in the background, blowing through our Analytics service limits and getting us kicked off.
-			if (s_exceptionCount > MAX_EXCEPTION_REPORTS_PER_RUN)
+			if (s_exceptionCount > kMaxExceptionReportsPerRun)
 			{
 				return;
 			}
 
-			var props = new JsonObject()
+			var props = new JsonObject
 			{
 				{ "Message", e.Message },
 				{ "Stack Trace", e.StackTrace }
@@ -623,9 +715,7 @@ namespace DesktopAnalytics
 			if (moreProperties != null)
 			{
 				foreach (var key in moreProperties.Keys)
-				{
 					props.Add(key, moreProperties[key]);
-				}
 			}
 			TrackWithApplicationProperties("Exception", props);
 		}
@@ -634,31 +724,54 @@ namespace DesktopAnalytics
 		{
 			var prop = new JsonObject();
 			foreach (var key in properties.Keys)
-			{
 				prop.Add(key, properties[key]);
-			}
 			return prop;
-		}
-
-		private static void Client_Succeeded(string action)
-		{
-			Debug.WriteLine($"Analytics action succeeded: {action}");
 		}
 
 		private static void Client_Failed(Exception e)
 		{
-			Debug.WriteLine($"**** Analytics action Failed: {Environment.NewLine}{e.StackTrace}");
+			Debug.WriteLine($"**** Analytics action Failed: {NewLine}{e.StackTrace}");
 		}
 
 		public void Dispose()
 		{
-			Client?.ShutDown();
+			_client?.ShutDown();
 		}
 
 		/// <summary>
 		/// Indicates whether we are tracking or not
 		/// </summary>
-		public static bool AllowTracking { get; private set; }
+		public static bool AllowTracking
+		{
+			get => s_allowTracking;
+			set
+			{
+				if (value == s_allowTracking)
+					return;
+
+				// The following is not strictly thread safe because another thread could set this
+				// after the singleton is created but before it checks the flag to decide whether
+				// to complete initialization based on the value of the flag. In practice, the
+				// Analytics object is normally constructed during application startup, before
+				// there is any real chance of multiple threads running.
+				if (value && s_singleton != null)
+				{
+					var initializationParameters = s_singleton._deferredInitializationParameters;
+					if (initializationParameters != null)
+					{
+						// By clearing these parameters, we reduce the chance that we will try to
+						// initialize twice if multiple threads are setting AllowTracking to true.
+						s_singleton._deferredInitializationParameters = null;
+						s_singleton.Initialize(initializationParameters);
+						return; // Initialize sets s_allowTracking = true
+					}
+				}
+
+				s_allowTracking = value;
+			}
+		}
+
+		private static bool s_allowTracking;
 
 		#region OSVersion
 		class Version
@@ -675,6 +788,7 @@ namespace DesktopAnalytics
 				_minor = minor;
 				Label = label;
 			}
+
 			public bool Match(OperatingSystem os)
 			{
 				return os.Version.Minor == _minor &&
@@ -685,7 +799,7 @@ namespace DesktopAnalytics
 
 		private static string GetOperatingSystemLabel()
 		{
-			if (Environment.OSVersion.Platform == PlatformID.Unix)
+			if (OSVersion.Platform == PlatformID.Unix)
 			{
 				return UnixName == "Linux" ? $"{LinuxVersion} / {LinuxDesktop}" : UnixName;
 			}
@@ -705,30 +819,27 @@ namespace DesktopAnalytics
 
 			foreach (var version in list)
 			{
-				if (version.Match(Environment.OSVersion))
-					return version.Label + " " + Environment.OSVersion.ServicePack;
+				if (version.Match(OSVersion))
+					return version.Label + " " + OSVersion.ServicePack;
 			}
 
 			// Handle any as yet unrecognized (possibly unmanifested) versions, or anything that reported its self as Windows 8.
-			if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+			if (OSVersion.Platform == PlatformID.Win32NT)
 			{
-				return GetWindowsVersionInfoFromNetworkAPI() + " " + Environment.OSVersion.ServicePack;
+				return GetWindowsVersionInfoFromNetworkAPI() + " " + OSVersion.ServicePack;
 			}
 
-			return Environment.OSVersion.VersionString;
+			return OSVersion.VersionString;
 		}
-
 
 		private string GetOperatingSystemVersionLabel()
 		{
-			return Environment.OSVersion.Version.ToString();
+			return OSVersion.Version.ToString();
 		}
 
 		#region Windows8PlusVersionReportingSupport
 		[DllImport("netapi32.dll", CharSet = CharSet.Auto)]
-		private static extern int NetWkstaGetInfo(string server,
-			int level,
-			out IntPtr info);
+		private static extern int NetWkstaGetInfo(string server, int level, out IntPtr info);
 
 		[DllImport("netapi32.dll")]
 		private static extern int NetApiBufferFree(IntPtr pBuf);
@@ -737,8 +848,10 @@ namespace DesktopAnalytics
 		private struct MachineInfo
 		{
 			private readonly int platform_id;
+
 			[MarshalAs(UnmanagedType.LPWStr)]
 			private readonly string _computerName;
+
 			[MarshalAs(UnmanagedType.LPWStr)]
 			private readonly string _languageGroup;
 			public readonly int _majorVersion;
@@ -768,7 +881,7 @@ namespace DesktopAnalytics
 			}
 			else if (info._majorVersion == 10 && info._minorVersion == 0)
 			{
-				windowsVersion = "Windows 10"; 
+				windowsVersion = "Windows 10";
 			}
 			else
 			{
@@ -781,12 +894,13 @@ namespace DesktopAnalytics
 
 		[DllImport("libc")]
 		static extern int uname(IntPtr buf);
+
 		private static string s_unixName;
 		private static string UnixName
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
 				if (s_unixName == null)
 				{
@@ -812,50 +926,42 @@ namespace DesktopAnalytics
 			}
 		}
 
-		private static string _linuxVersion;
+		private static string s_linuxVersion;
 		private static string LinuxVersion
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
-				if (_linuxVersion == null)
-				{
-					_linuxVersion = Empty;
-					if (File.Exists("/etc/wasta-release"))
-					{
-						var versionData = File.ReadAllText("/etc/wasta-release");
-						var versionLines = versionData.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-						foreach (var line in versionLines)
-						{
-							if (line.StartsWith("DESCRIPTION=\""))
-							{
-								_linuxVersion = line.Substring(13).Trim('"');
-								break;
-							}
-						}
-					}
-					else if (File.Exists("/etc/lsb-release"))
-					{
-						var versionData = File.ReadAllText("/etc/lsb-release");
-						var versionLines = versionData.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-						foreach (var t in versionLines)
-						{
-							if (t.StartsWith("DISTRIB_DESCRIPTION=\""))
-							{
-								_linuxVersion = t.Substring(21).Trim('"');
-								break;
-							}
-						}
-					}
-					else
-					{
-						// If it's linux, it really should have /etc/lsb-release!
-						_linuxVersion = Environment.OSVersion.VersionString;
-					}
-				}
-				return _linuxVersion;
+				if (s_linuxVersion != null)
+					return s_linuxVersion;
+
+				s_linuxVersion = DetermineLinuxVersion();
+				return s_linuxVersion;
 			}
+		}
+
+		private static string DetermineLinuxVersion()
+		{
+			var candidates = new[]
+			{
+				(FilePath: "/etc/wasta-release", Prefix: "DESCRIPTION=\""),
+				(FilePath: "/etc/lsb-release", Prefix: "DISTRIB_DESCRIPTION=\"")
+			};
+
+			foreach (var candidate in candidates)
+			{
+				if (File.Exists(candidate.FilePath))
+				{
+					var line = File.ReadLines(candidate.FilePath)
+						.FirstOrDefault(l => l.StartsWith(candidate.Prefix));
+					if (line != null)
+						return line.Substring(candidate.Prefix.Length).Trim('"');
+				}
+			}
+
+			// Fallback, but if it's linux, it really should have /etc/lsb-release!
+			return OSVersion.VersionString;
 		}
 
 		/// <summary>
@@ -866,15 +972,15 @@ namespace DesktopAnalytics
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					return Environment.OSVersion.Platform.ToString();
+				if (OSVersion.Platform != PlatformID.Unix)
+					return OSVersion.Platform.ToString();
 
 				// see http://unix.stackexchange.com/a/116694
 				// and http://askubuntu.com/a/227669
-				var currentDesktop = Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
+				var currentDesktop = GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
 				if (IsNullOrEmpty(currentDesktop))
 				{
-					var dataDirs = Environment.GetEnvironmentVariable("XDG_DATA_DIRS");
+					var dataDirs = GetEnvironmentVariable("XDG_DATA_DIRS");
 					if (dataDirs != null)
 					{
 						dataDirs = dataDirs.ToLowerInvariant();
@@ -886,13 +992,14 @@ namespace DesktopAnalytics
 							currentDesktop = "Gnome";
 					}
 					if (IsNullOrEmpty(currentDesktop))
-						currentDesktop = Environment.GetEnvironmentVariable("GDMSESSION") ?? Empty;
+						currentDesktop = GetEnvironmentVariable("GDMSESSION") ?? Empty;
 				}
 				return currentDesktop.ToLowerInvariant();
 			}
 		}
 
 		private static string s_linuxDesktop;
+
 		/// <summary>
 		/// Get the currently running desktop environment (like Unity, Gnome shell etc)
 		/// </summary>
@@ -900,25 +1007,25 @@ namespace DesktopAnalytics
 		{
 			get
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
+				if (OSVersion.Platform != PlatformID.Unix)
 					return Empty;
 				if (s_linuxDesktop == null)
 				{
 					// see http://unix.stackexchange.com/a/116694
 					// and http://askubuntu.com/a/227669
 					var currentDesktop = DesktopEnvironment;
-					var mirSession = Environment.GetEnvironmentVariable("MIR_SERVER_NAME");
+					var mirSession = GetEnvironmentVariable("MIR_SERVER_NAME");
 					var additionalInfo = Empty;
 					if (!IsNullOrEmpty(mirSession))
 						additionalInfo = " [display server: Mir]";
-					var gdmSession = Environment.GetEnvironmentVariable("GDMSESSION") ?? "not set";
+					var gdmSession = GetEnvironmentVariable("GDMSESSION") ?? "not set";
 					s_linuxDesktop = $"{currentDesktop} ({gdmSession}{additionalInfo})";
 				}
 				return s_linuxDesktop;
 			}
 		}
 
-		public static Statistics Statistics => s_singleton.Client.Statistics;
+		public static Statistics Statistics => s_singleton._client?.Statistics ?? new Statistics(0, 0, 0);
 
 		/// <summary>
 		/// All calls to Client.Track should run through here so we can provide defaults for every event
@@ -926,18 +1033,25 @@ namespace DesktopAnalytics
 		private static void TrackWithApplicationProperties(string eventName, JsonObject properties = null)
 		{
 			if (s_singleton == null)
-			{
 				throw new ApplicationException("The application must first construct a single Analytics object");
-			}
+
+			if (!AllowTracking)
+				return;
+
 			if (properties == null)
 				properties = new JsonObject();
+
 			foreach (var p in s_singleton._propertiesThatGoWithEveryEvent)
 			{
-				if (properties.ContainsKey(p.Key))
-					properties.Remove(p.Key);
+				properties.Remove(p.Key);
 				properties.Add(p.Key, p.Value ?? Empty);
 			}
-			s_singleton.Client.Track(AnalyticsSettings.Default.IdForAnalytics, eventName, properties);
+
+			s_singleton._client.Track(
+				AnalyticsSettings.Default.IdForAnalytics,
+				eventName,
+				properties
+			);
 		}
 
 		/// <summary>
@@ -951,23 +1065,24 @@ namespace DesktopAnalytics
 				throw new ArgumentNullException(key);
 			if (value == null)
 				value = Empty;
-			if (s_singleton._propertiesThatGoWithEveryEvent.ContainsKey(key))
-			{
-				s_singleton._propertiesThatGoWithEveryEvent.Remove(key);
-			}
+			s_singleton._propertiesThatGoWithEveryEvent.Remove(key);
 			s_singleton._propertiesThatGoWithEveryEvent.Add(key, value);
 		}
 
 		private static string GetUserNameForEvent()
 		{
-			return s_userInfo == null ? "unknown" :
-				(IsNullOrWhiteSpace(s_userInfo.FirstName) ? "" : s_userInfo.FirstName + " ") + s_userInfo.LastName;
+			if (s_userInfo == null)
+				return "unknown";
+
+			return IsNullOrWhiteSpace(s_userInfo.FirstName)
+				? s_userInfo.LastName
+				: $"{s_userInfo.FirstName} {s_userInfo.LastName}";
 		}
 		#endregion
 
 		public static void FlushClient()
 		{
-			s_singleton.Client.Flush();
+			s_singleton._client?.Flush();
 		}
 	}
 }

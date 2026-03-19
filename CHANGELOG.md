@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+
+## [6.1.0] - 2026-02-27
+
+### Added
+- [DesktopAnalytics] Made it possible to disable and enable tracking while running the application
+
+## [6.0.3] - 2026-01-09
+
+### Changed
+- [DesktopAnalytics] Added DeviceUILanguage application property
+
+## [6.0.2] - 2025-05-09
+
+### Fixed
+- [DesktopAnalytics] Prevented crash in constructor if config file cannot be upgraded or saved
+
 ## [6.0.0] - 2024-04-22
 
 ### Changed
