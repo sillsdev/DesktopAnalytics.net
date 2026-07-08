@@ -70,6 +70,23 @@ namespace DesktopAnalytics
 		public Statistics Statistics => new Statistics(StatMonitor.Submitted,
 			StatMonitor.Succeeded, StatMonitor.Failed);
 
+		/// <summary>
+		/// The Segment path already gets offline durability from Segment.Analytics.CSharp's own
+		/// on-disk storage/retry, and this class does not maintain a separate spool of its own -- so
+		/// there is nothing here to purge on consent revocation.
+		/// </summary>
+		public void PurgeQueuedEvents()
+		{
+		}
+
+		/// <summary>
+		/// No-op: this client has no separate background flush loop of its own to re-arm (the
+		/// Segment.Analytics.CSharp library manages its own delivery), so there is nothing to resume.
+		/// </summary>
+		public void ResumeSending()
+		{
+		}
+
 		public void OnExceptionThrown(Exception e)
 		{
 			Debug.WriteLine($"**** Segment.IO Failed to deliver. {e.Message}");

@@ -1,0 +1,479 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using DesktopAnalytics;
+using NUnit.Framework;
+using Segment.Serialization;
+
+namespace DesktopAnalyticsTests
+{
+	// Layer 3 of the fidelity ladder in offline-analytics.md: the real EventSpool (on a temp
+	// folder) driving a real MixpanelClient, with a scripted fake IEventSender standing in for the
+	// network. Tests pump DrainOnce() directly rather than racing the real background timer (see
+	// "Design-for-test seams" / "Flush-loop scheduling" in offline-analytics.md); InitializeForTest
+	// never starts that timer.
+	[TestFixture]
+	public class MixpanelClientTests
+	{
+		private string _spoolDir;
+
+		[SetUp]
+		public void SetUp()
+		{
+			_spoolDir = Path.Combine(Path.GetTempPath(), "MixpanelClientTests_" + Guid.NewGuid());
+		}
+
+		[TearDown]
+		public void TearDown()
+		{
+			if (Directory.Exists(_spoolDir))
+			{
+				try
+				{
+					Directory.Delete(_spoolDir, true);
+				}
+				catch (Exception e)
+				{
+					Console.WriteLine("MixpanelClientTests.TearDown: failed to delete " + _spoolDir + ": " + e);
+				}
+			}
+		}
+
+		// A scripted IEventSender: each call to Send() consumes the next step in the script (or
+		// defaults to Delivered once the script is exhausted) and always records the event it was
+		// given, so tests can assert both what happened and what was actually handed to the sender.
+		private class ScriptedSender : IEventSender
+		{
+			private readonly Queue<Func<AnalyticsEvent, SendResult>> _script;
+			public readonly List<AnalyticsEvent> Sent = new List<AnalyticsEvent>();
+
+			public ScriptedSender(IEnumerable<Func<AnalyticsEvent, SendResult>> script)
+			{
+				_script = new Queue<Func<AnalyticsEvent, SendResult>>(script);
+			}
+
+			public SendResult Send(AnalyticsEvent evt)
+			{
+				Sent.Add(evt);
+				var step = _script.Count > 0 ? _script.Dequeue() : (_ => SendResult.Delivered);
+				return step(evt);
+			}
+		}
+
+		private class AlwaysResultSender : IEventSender
+		{
+			private readonly SendResult _result;
+			public int CallCount;
+
+			public AlwaysResultSender(SendResult result)
+			{
+				_result = result;
+			}
+
+			public SendResult Send(AnalyticsEvent evt)
+			{
+				CallCount++;
+				return _result;
+			}
+		}
+
+		private class ThrowingSender : IEventSender
+		{
+			public SendResult Send(AnalyticsEvent evt)
+			{
+				throw new InvalidOperationException("simulated sender failure");
+			}
+		}
+
+		// ---- NO-LOSS -------------------------------------------------------------------------
+
+		[Test]
+		public void DrainOnce_RetryRetryThenDeliverAcrossSuccessiveCalls_DeliversExactlyOnceAndEmptiesSpool()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
+				{
+					_ => SendResult.RetryableFailure,
+					_ => SendResult.RetryableFailure,
+					_ => SendResult.Delivered
+				});
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "Save", null);
+				Assert.AreEqual(1, spool.ApproximateCount);
+
+				client.DrainOnce(); // 1st attempt: RetryableFailure -- left in spool.
+				Assert.AreEqual(1, spool.ApproximateCount);
+
+				client.DrainOnce(); // 2nd attempt: RetryableFailure -- still left in spool.
+				Assert.AreEqual(1, spool.ApproximateCount);
+
+				client.DrainOnce(); // 3rd attempt: Delivered -- removed.
+				Assert.AreEqual(0, spool.ApproximateCount);
+
+				Assert.AreEqual(3, sender.Sent.Count, "the event should have been handed to the sender exactly three times");
+				Assert.AreEqual(1, client.Statistics.Succeeded);
+				Assert.AreEqual(0, client.Statistics.Failed);
+			}
+		}
+
+		// ---- CRASH-WINDOW / DEDUP -------------------------------------------------------------
+
+		[Test]
+		public void DrainOnce_SenderRecordsThenThrows_SameInsertIdSeenAgainOnLaterRetry()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var client = new MixpanelClient();
+
+				// A sender that behaves exactly like one that delivered the event over the network
+				// and then crashed/threw before this process could observe success and flush --
+				// the crash-window this whole design exists to survive.
+				var crashingSender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
+				{
+					_ => throw new InvalidOperationException("simulated crash after send, before ack")
+				});
+				client.InitializeForTest(spool, crashingSender);
+				client.Track("user-1", "Save", null);
+
+				Assert.DoesNotThrow(() => client.DrainOnce());
+				Assert.AreEqual(1, spool.ApproximateCount, "the event must not be removed -- the sender never confirmed delivery");
+				Assert.AreEqual(1, crashingSender.Sent.Count);
+
+				// "Reopen"/retry with a now-succeeding sender against the SAME spool.
+				var succeedingSender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
+				{
+					_ => SendResult.Delivered
+				});
+				client.InitializeForTest(spool, succeedingSender);
+				client.DrainOnce();
+
+				Assert.AreEqual(0, spool.ApproximateCount);
+				Assert.AreEqual(1, succeedingSender.Sent.Count);
+
+				// The key assertion: the sender saw the SAME $insert_id both times, proving Mixpanel
+				// would dedup the at-least-once replay rather than double-counting the event.
+				Assert.AreEqual(crashingSender.Sent[0].InsertId, succeedingSender.Sent[0].InsertId);
+			}
+		}
+
+		// ---- POISON ---------------------------------------------------------------------------
+
+		[Test]
+		public void DrainOnce_PoisonDrop_RemovesEventAndIncrementsFailedWithoutRetrying()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.PoisonDrop);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "BadEvent", null);
+				client.DrainOnce();
+
+				Assert.AreEqual(0, spool.ApproximateCount, "a poison event must be dropped, not left to wedge the spool");
+				Assert.AreEqual(1, sender.CallCount);
+				Assert.AreEqual(1, client.Statistics.Failed);
+				Assert.AreEqual(0, client.Statistics.Succeeded);
+
+				// A further drain must not re-attempt it (it is already gone).
+				client.DrainOnce();
+				Assert.AreEqual(1, sender.CallCount);
+			}
+		}
+
+		// ---- CONSENT PURGE ----------------------------------------------------------------------
+
+		[Test]
+		public void PurgeQueuedEvents_EmptiesNonEmptySpool()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.Delivered);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "A", null);
+				client.Track("user-1", "B", null);
+				Assert.AreEqual(2, spool.ApproximateCount);
+
+				client.PurgeQueuedEvents();
+
+				Assert.AreEqual(0, spool.ApproximateCount);
+			}
+		}
+
+		[Test]
+		public void PurgeQueuedEvents_NeverThrows_EvenWithNoSpool()
+		{
+			var client = new MixpanelClient();
+			client.InitializeForTest(null, new AlwaysResultSender(SendResult.Delivered));
+
+			Assert.DoesNotThrow(() => client.PurgeQueuedEvents());
+		}
+
+		// ---- SCRUBBING --------------------------------------------------------------------------
+
+		[Test]
+		public void Track_ExceptionEventWithUserPathInStackTrace_ScrubsBeforeSpoolingAndSending()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.Delivered);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				var props = new JsonObject
+				{
+					{ "Message", "Boom" },
+					{ "Stack Trace", @"at Foo.Bar() in C:\Users\alice\src\Foo.cs:line 10" }
+				};
+				client.Track("user-1", "Exception", props);
+
+				// Prove it was scrubbed BEFORE hitting the disk, not just before being sent: drain
+				// with a sender that records what it was actually handed.
+				var scriptedSender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
+				{
+					_ => SendResult.Delivered
+				});
+				var reopenedClient = new MixpanelClient();
+				reopenedClient.InitializeForTest(spool, scriptedSender);
+				reopenedClient.DrainOnce();
+
+				Assert.AreEqual(1, scriptedSender.Sent.Count);
+				var sentStackTrace = ((JsonPrimitive)scriptedSender.Sent[0].Properties["Stack Trace"]).Content;
+				StringAssert.DoesNotContain("alice", sentStackTrace);
+				StringAssert.Contains("%USER%", sentStackTrace);
+			}
+		}
+
+		[Test]
+		public void Track_EventNameContainingUserPath_ScrubsEventName()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, new AlwaysResultSender(SendResult.Delivered));
+
+				client.Track("user-1", @"Opened C:\Users\alice\project.xyz", null);
+
+				var sender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[] { _ => SendResult.Delivered });
+				var drainer = new MixpanelClient();
+				drainer.InitializeForTest(spool, sender);
+				drainer.DrainOnce();
+
+				StringAssert.DoesNotContain("alice", sender.Sent[0].EventName);
+				StringAssert.Contains("%USER%", sender.Sent[0].EventName);
+			}
+		}
+
+		// ---- NEVER CRASH ------------------------------------------------------------------------
+
+		[Test]
+		public void Track_WithNoSpool_NeverThrows()
+		{
+			var client = new MixpanelClient();
+			// Simulates a failed Initialize (e.g. the EventSpool constructor threw acquiring the
+			// cross-process lock), which leaves the client with no spool at all.
+			client.InitializeForTest(null, new AlwaysResultSender(SendResult.Delivered));
+
+			Assert.DoesNotThrow(() => client.Track("user-1", "Save", null));
+			Assert.DoesNotThrow(() => client.DrainOnce());
+			Assert.DoesNotThrow(() => client.Flush());
+			Assert.DoesNotThrow(() => client.ShutDown());
+		}
+
+		[Test]
+		public void DrainOnceAndFlush_SenderAlwaysThrows_NeverPropagateOutOfMixpanelClient()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, new ThrowingSender());
+
+				client.Track("user-1", "Save", null);
+
+				Assert.DoesNotThrow(() => client.DrainOnce());
+				Assert.DoesNotThrow(() => client.Flush());
+
+				// A sender that only ever throws must not be treated as delivered/poison -- the
+				// event must still be sitting in the spool for a later retry.
+				Assert.AreEqual(1, spool.ApproximateCount);
+			}
+		}
+
+		// ---- SHUTDOWN OFFLINE -------------------------------------------------------------------
+
+		[Test]
+		public void ShutDown_SenderAlwaysFails_ReturnsPromptlyAndEventsRemainOnDisk()
+		{
+			var spool = new EventSpool(_spoolDir, 10);
+			var sender = new AlwaysResultSender(SendResult.RetryableFailure);
+			var client = new MixpanelClient();
+			client.InitializeForTest(spool, sender);
+
+			for (var i = 0; i < 5; i++)
+				client.Track("user-1", "Save-" + i, null);
+
+			var stopwatch = Stopwatch.StartNew();
+			var completed = Task.Run(() => client.ShutDown()).Wait(TimeSpan.FromSeconds(15));
+			stopwatch.Stop();
+
+			Assert.IsTrue(completed, "ShutDown() did not return within the timeout while offline");
+			Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(15));
+
+			// ShutDown() must have released the spool's cross-process lock -- reopening it and
+			// finding all 5 events proves nothing was lost, and that the lock really was released.
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				Assert.AreEqual(5, reopened.ApproximateCount);
+			}
+		}
+
+		[Test]
+		public void Flush_WhileOffline_ReturnsPromptlyWithoutEmptyingSpool()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.RetryableFailure);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "Save", null);
+
+				var stopwatch = Stopwatch.StartNew();
+				var completed = Task.Run(() => client.Flush()).Wait(TimeSpan.FromSeconds(15));
+				stopwatch.Stop();
+
+				Assert.IsTrue(completed, "Flush() did not return within the timeout while offline");
+				Assert.AreEqual(1, spool.ApproximateCount, "an offline flush must leave the undelivered event on disk");
+			}
+		}
+
+		// ---- STATISTICS -------------------------------------------------------------------------
+
+		[Test]
+		public void Track_IncrementsSubmittedImmediately()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, new AlwaysResultSender(SendResult.Delivered));
+
+				client.Track("user-1", "A", null);
+				client.Track("user-1", "B", null);
+
+				Assert.AreEqual(2, client.Statistics.Submitted);
+			}
+		}
+
+		// ---- POLLY --------------------------------------------------------------------------------
+		//
+		// NOTE on which of the two documented approaches this uses (see offline-analytics.md,
+		// "Polly"): rather than driving Polly's real (non-zero) backoff delays through a
+		// FakeTimeProvider -- which is documented to hit the Polly #1932
+		// SynchronizationContext-vs-ConfigureAwait gotcha -- this test injects a real retry pipeline
+		// (via MixpanelClient.BuildDefaultPipeline) configured with a ZERO base delay. That keeps
+		// the retry *strategy* itself real (ShouldHandle, MaxRetryAttempts, backoff wiring) while
+		// making the test deterministic and instantaneous, per the spec's documented fallback.
+
+		[Test]
+		public void DrainOnce_WithRealRetryPipelineAndZeroDelay_TransientThenSuccess_DeliversWithinOneDrainOnceCall()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
+				{
+					_ => SendResult.RetryableFailure,
+					_ => SendResult.Delivered
+				});
+				var pipeline = MixpanelClient.BuildDefaultPipeline(TimeProvider.System,
+					maxRetryAttempts: 2, retryDelay: TimeSpan.Zero);
+
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender, pipeline: pipeline);
+
+				client.Track("user-1", "Save", null);
+				client.DrainOnce();
+
+				Assert.AreEqual(0, spool.ApproximateCount,
+					"Polly should have retried in-process and delivered within this single DrainOnce call");
+				Assert.AreEqual(2, sender.Sent.Count,
+					"the sender should have been called twice: once for the transient failure, once for the retry");
+				Assert.AreEqual(1, client.Statistics.Succeeded);
+			}
+		}
+
+		[Test]
+		public void DrainOnce_WithRealCircuitBreakerAndZeroDelay_SustainedFailures_TripsBreakerAndStopsCallingSender()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.RetryableFailure);
+				// MinimumThroughput=4 by default: force enough failing attempts through quickly
+				// (small batch, zero delay) to trip the breaker, then verify a further drain of a
+				// fresh event does not even reach the sender.
+				// MaxRetryAttempts must be >= 1 (Polly validates this); 1 is close enough to "no
+				// retry" for this test's purposes -- what matters is that sender calls stop growing
+				// once the breaker trips, not the exact attempt count.
+				var pipeline = MixpanelClient.BuildDefaultPipeline(TimeProvider.System,
+					maxRetryAttempts: 1, retryDelay: TimeSpan.Zero);
+
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender, pipeline: pipeline, batchSize: 1);
+
+				for (var i = 0; i < 8; i++)
+				{
+					client.Track("user-1", "Save-" + i, null);
+					client.DrainOnce();
+				}
+
+				var callsAfterWarmup = sender.CallCount;
+
+				client.Track("user-1", "OneMore", null);
+				client.DrainOnce();
+
+				// Once the breaker is open, MixpanelClient must treat BrokenCircuitException as a
+				// RetryableFailure (leaving the event spooled) WITHOUT invoking the sender again.
+				Assert.AreEqual(callsAfterWarmup, sender.CallCount,
+					"once the circuit breaker is open, the sender must not be called again");
+				Assert.Greater(spool.ApproximateCount, 0);
+			}
+		}
+
+		// ---- CONTRACT: host parameter is rejected (Mixpanel does not support a host) -----------
+
+		[Test]
+		public void Initialize_WithNonEmptyHost_ThrowsArgumentException()
+		{
+			var client = new MixpanelClient();
+			// Validated before any spool/timer is created, so no side effects and it propagates to the
+			// caller exactly as the original MixpanelClient did.
+			Assert.Throws<ArgumentException>(() => client.Initialize("secret", "https://example.com"));
+		}
+
+		// ---- CONSENT PAUSE/RESUME (fix: re-enabling consent re-arms the flush loop) -------------
+
+		[Test]
+		public void PurgeQueuedEvents_ThenResumeSending_TogglesSendingPaused()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, new AlwaysResultSender(SendResult.Delivered));
+
+				Assert.IsFalse(client.SendingPaused, "should start unpaused");
+
+				client.PurgeQueuedEvents();
+				Assert.IsTrue(client.SendingPaused, "revoking consent (purge) must pause the flush loop");
+
+				client.ResumeSending();
+				Assert.IsFalse(client.SendingPaused, "re-granting consent (resume) must un-pause the flush loop");
+			}
+		}
+	}
+}

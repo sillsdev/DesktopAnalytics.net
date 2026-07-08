@@ -765,6 +765,34 @@ namespace DesktopAnalytics
 						s_singleton.Initialize(initializationParameters);
 						return; // Initialize sets s_allowTracking = true
 					}
+
+					// Already initialized and now re-enabled: re-arm any background flush loop that a
+					// prior PurgeQueuedEvents (consent revocation) paused. See offline-analytics.md.
+					try
+					{
+						s_singleton._client?.ResumeSending();
+					}
+					catch (Exception e)
+					{
+						Debug.WriteLine("Analytics.AllowTracking: ResumeSending failed: " + e);
+					}
+				}
+
+				if (!value)
+				{
+					// Consent revoked: purge any durable client's on-disk spool immediately (see
+					// offline-analytics.md, "Consent & lifecycle"). Guarded against a null singleton
+					// (AllowTracking can technically be set before an Analytics object is
+					// constructed) and a null client (the Segment/Mixpanel client is only assigned
+					// inside the Analytics constructor).
+					try
+					{
+						s_singleton?._client?.PurgeQueuedEvents();
+					}
+					catch (Exception e)
+					{
+						Debug.WriteLine("Analytics.AllowTracking: PurgeQueuedEvents failed: " + e);
+					}
 				}
 
 				s_allowTracking = value;

@@ -17,10 +17,13 @@
     <AssemblyOriginatorKeyFile>..\..\DesktopAnalytics.snk</AssemblyOriginatorKeyFile>
 </PropertyGroup>
 <ItemGroup>
+    <PackageReference Include="DiskQueue" Version="1.7.2" />
     <PackageReference Include="JetBrains.Annotations" Version="2023.2.0">
       <PrivateAssets>All</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Bcl.TimeProvider" Version="8.0.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+    <PackageReference Include="Polly" Version="8.4.2" />
 </ItemGroup>
 <ItemGroup>
   <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
