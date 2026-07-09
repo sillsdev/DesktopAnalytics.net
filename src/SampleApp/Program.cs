@@ -10,30 +10,60 @@ namespace SampleApp
 	{
 		static int Main(string[] args)
 		{
-			if (args.Length < 2 || args.Length > 3)
+			const string usage = "Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???> " +
+				"[i[nitialTrackingState]=true|false] [c[onsentToggle]=true|false]";
+
+			if (args.Length < 2 || args.Length > 4)
 			{
-				Console.WriteLine("Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???> [i[nitialTrackingState]=true|false]");
+				Console.WriteLine(usage);
 				return 1;
 			}
 
 			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
 			{
-				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecognized client type: {args[1]}");
+				Console.WriteLine($"{usage}{Environment.NewLine}Unrecognized client type: {args[1]}");
 				return 1;
 			}
 
 			var initialTracking = true;
-			
-			if (args.Length == 3)
+			// Exercises the AllowTracking off/on demo below by default (existing behavior). A caller
+			// driving this app as a durability-test harness across multiple process runs (rather than
+			// as a manual consent-flow demo) needs c=false: toggling AllowTracking calls
+			// PurgeQueuedEvents, which empties the ENTIRE on-disk spool immediately -- including any
+			// leftover events from a prior run -- so with the toggle left on, this app can never be
+			// used to prove "events spooled by a previous run survive and drain," only to demo consent.
+			var exerciseConsentToggle = true;
+
+			for (var i = 2; i < args.Length; i++)
 			{
-				var parts = args[2].Split('=');
-				if (parts.Length != 2 ||
-				    (!parts[0].Equals("i", StringComparison.OrdinalIgnoreCase) &&
-				     !parts[0].Equals("initialTrackingState", StringComparison.OrdinalIgnoreCase)) ||
-				    !bool.TryParse(parts[1], out initialTracking))
+				var parts = args[i].Split('=');
+				if (parts.Length != 2)
 				{
-					Console.WriteLine(
-						$"Unrecognized parameter: {args[2]}{Environment.NewLine}Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???> [i[nitialTrackingState]=true|false]");
+					Console.WriteLine($"Unrecognized parameter: {args[i]}{Environment.NewLine}{usage}");
+					return 1;
+				}
+
+				if (parts[0].Equals("i", StringComparison.OrdinalIgnoreCase) ||
+				    parts[0].Equals("initialTrackingState", StringComparison.OrdinalIgnoreCase))
+				{
+					if (!bool.TryParse(parts[1], out initialTracking))
+					{
+						Console.WriteLine($"Unrecognized parameter: {args[i]}{Environment.NewLine}{usage}");
+						return 1;
+					}
+				}
+				else if (parts[0].Equals("c", StringComparison.OrdinalIgnoreCase) ||
+				         parts[0].Equals("consentToggle", StringComparison.OrdinalIgnoreCase))
+				{
+					if (!bool.TryParse(parts[1], out exerciseConsentToggle))
+					{
+						Console.WriteLine($"Unrecognized parameter: {args[i]}{Environment.NewLine}{usage}");
+						return 1;
+					}
+				}
+				else
+				{
+					Console.WriteLine($"Unrecognized parameter: {args[i]}{Environment.NewLine}{usage}");
 					return 1;
 				}
 			}
@@ -60,12 +90,16 @@ namespace SampleApp
 				Debug.WriteLine("Sleeping for 20 seconds to give it all a chance to send an event in the background...");
 				Thread.Sleep(20000);
 
-				Analytics.AllowTracking = !Analytics.AllowTracking;
-				Analytics.Track("Should not be tracked");
-				Debug.WriteLine("Sleeping for 2 seconds just for fun");
-				Thread.Sleep(2000);
+				if (exerciseConsentToggle)
+				{
+					Analytics.AllowTracking = !Analytics.AllowTracking;
+					Analytics.Track("Should not be tracked");
+					Debug.WriteLine("Sleeping for 2 seconds just for fun");
+					Thread.Sleep(2000);
 
-				Analytics.AllowTracking = !Analytics.AllowTracking;
+					Analytics.AllowTracking = !Analytics.AllowTracking;
+				}
+
 				Analytics.SetApplicationProperty("TimeSinceLaunch", "25 seconds");
 				Analytics.Track("SomeEvent", new Dictionary<string, string> {{"SomeValue", "42"}});
 				Console.WriteLine("Sleeping for another 20 seconds to give it all a chance to send an event in the background...");
