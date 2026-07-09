@@ -32,40 +32,36 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Creates a new event, stamping <see cref="InsertId"/> and <see cref="Time"/> via the
-		/// supplied (injectable) dependencies so callers/tests can be deterministic. Production
-		/// code can omit both arguments to get a real GUID and the real wall-clock time.
+		/// Creates a new event, stamping <see cref="InsertId"/> and <see cref="Time"/>. Both are
+		/// overridable so callers/tests can be deterministic; production code can omit them to get
+		/// a real GUID and the real wall-clock time.
 		/// </summary>
 		/// <param name="analyticsId">The stable per-user analytics id.</param>
 		/// <param name="eventName">The event name.</param>
 		/// <param name="properties">Event properties. May be null, in which case an empty
 		/// property bag is used.</param>
-		/// <param name="insertIdFactory">Supplies the $insert_id. Defaults to
-		/// <c>Guid.NewGuid().ToString()</c>. Never call Guid.NewGuid() directly elsewhere in the
-		/// stamping path -- inject it here so tests are deterministic.</param>
-		/// <param name="clock">Supplies the event time. Defaults to
-		/// <c>DateTimeOffset.UtcNow</c>. Never call DateTime.Now/DateTimeOffset.UtcNow directly
-		/// elsewhere in the stamping path -- inject it here so tests are deterministic.</param>
+		/// <param name="insertId">The $insert_id. Defaults to a fresh GUID. Never call
+		/// Guid.NewGuid() directly elsewhere in the stamping path -- pass it here so tests are
+		/// deterministic.</param>
+		/// <param name="time">The event time. Defaults to <c>DateTimeOffset.UtcNow</c>. Never
+		/// call DateTime.Now/DateTimeOffset.UtcNow directly elsewhere in the stamping path --
+		/// pass it here (e.g. from an injected <see cref="TimeProvider"/>) so tests are
+		/// deterministic.</param>
 		public static AnalyticsEvent Create(
 			string analyticsId,
 			string eventName,
 			JsonObject properties = null,
-			Func<string> insertIdFactory = null,
-			Func<DateTimeOffset> clock = null
+			string insertId = null,
+			DateTimeOffset? time = null
 		)
 		{
-			if (insertIdFactory == null)
-				insertIdFactory = () => Guid.NewGuid().ToString();
-			if (clock == null)
-				clock = () => DateTimeOffset.UtcNow;
-
 			return new AnalyticsEvent
 			{
 				AnalyticsId = analyticsId,
 				EventName = eventName,
 				Properties = properties ?? new JsonObject(),
-				InsertId = insertIdFactory(),
-				Time = clock()
+				InsertId = insertId ?? Guid.NewGuid().ToString(),
+				Time = time ?? DateTimeOffset.UtcNow
 			};
 		}
 

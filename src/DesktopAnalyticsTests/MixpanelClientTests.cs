@@ -252,7 +252,24 @@ namespace DesktopAnalyticsTests
 				};
 				client.Track("user-1", "Exception", props);
 
-				// Prove it was scrubbed BEFORE hitting the disk, not just before being sent: drain
+				// Prove it was scrubbed BEFORE hitting the disk by scanning the raw spool files
+				// themselves, before anything drains: no assertion on what the sender is later
+				// handed can distinguish scrub-at-enqueue from scrub-at-send, but the bytes on
+				// disk can. Guard against vacuously passing (e.g. if the persisted encoding ever
+				// changes) by requiring the scrubbed marker to actually be FOUND on disk.
+				var scrubbedMarkerFoundOnDisk = false;
+				foreach (var file in EventSpoolTests.ReadableSpoolFiles(_spoolDir))
+				{
+					StringAssert.DoesNotContain("alice", file.Value,
+						"unscrubbed user path found on disk in " + file.Key);
+					if (file.Value.Contains("%USER%"))
+						scrubbedMarkerFoundOnDisk = true;
+				}
+				Assert.IsTrue(scrubbedMarkerFoundOnDisk,
+					"expected to find the scrubbed path (%USER%) in the raw spool files -- if this " +
+					"stops being readable as UTF-8 text, rework this scan");
+
+				// And the scrubbed form (not just an absent event) is what got persisted: drain
 				// with a sender that records what it was actually handed.
 				var scriptedSender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[]
 				{
@@ -290,6 +307,17 @@ namespace DesktopAnalyticsTests
 		}
 
 		// ---- NEVER CRASH ------------------------------------------------------------------------
+
+		// Calling Track on a client that was never initialized at all is a programming error in
+		// the host and must throw (the original MixpanelClient dereferenced a null field there) --
+		// NOT silently drop every event. Distinct from Track_WithNoSpool_NeverThrows below, where
+		// Initialize DID run but the spool could not be created.
+		[Test]
+		public void Track_WithoutInitialize_ThrowsInvalidOperationException()
+		{
+			var client = new MixpanelClient();
+			Assert.Throws<InvalidOperationException>(() => client.Track("user-1", "Save", null));
+		}
 
 		[Test]
 		public void Track_WithNoSpool_NeverThrows()

@@ -52,7 +52,11 @@ namespace DesktopAnalytics
 		private const int kApiKeyHashBytes = 8;
 
 		private readonly int _maxItems;
-		private readonly IPersistentQueue _queue;
+		private readonly string _spoolDirectory;
+		// Not readonly: Purge replaces the queue wholesale (see its remarks). Always accessed
+		// under _syncRoot. Null only if a Purge-time reopen failed; every public method already
+		// catches and logs whatever follows from that.
+		private IPersistentQueue _queue;
 		private readonly object _syncRoot = new object();
 		private bool _disposed;
 
@@ -75,6 +79,7 @@ namespace DesktopAnalytics
 				throw new ArgumentOutOfRangeException(nameof(maxItems));
 
 			_maxItems = maxItems;
+			_spoolDirectory = spoolDirectory;
 			_queue = PersistentQueue.WaitFor(spoolDirectory, s_lockWaitTimeout);
 		}
 
@@ -298,35 +303,44 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Empties the spool entirely (used on consent revocation). Never throws.
+		/// Empties the spool entirely (used on consent revocation), removing the event data from
+		/// disk -- not merely marking it consumed. Never throws.
 		/// </summary>
+		/// <remarks>
+		/// Implemented as dispose + delete-the-directory + reopen rather than either alternative,
+		/// both tried empirically (2026-07, DiskQueue 1.7.2): a dequeue-and-flush loop leaves the
+		/// purged events' bytes sitting in the data files (DiskQueue does not trim consumed
+		/// entries), which is not acceptable for a CONSENT purge; and DiskQueue's own
+		/// <c>HardDelete(reset: true)</c> leaves the live instance's
+		/// <c>EstimatedCountOfItemsInQueue</c> stale, so the spool keeps reporting the purged
+		/// events as present -- consistent with its "not thread safe ... or safe in any other
+		/// way" warning. Between the dispose and the reopen the cross-process exclusive lock is
+		/// briefly released; if another process steals it in that window the reopen fails, this
+		/// spool degrades to a no-op (every method here already tolerates that), and the purge
+		/// itself has still succeeded -- the data is gone, which is the property that matters.
+		/// </remarks>
 		public void Purge()
 		{
 			try
 			{
 				lock (_syncRoot)
 				{
-					using (var session = _queue.OpenSession())
+					if (_disposed)
+						return;
+
+					try
 					{
-						while (true)
-						{
-							byte[] item;
-							try
-							{
-								item = session.Dequeue();
-							}
-							catch (Exception e)
-							{
-								Debug.WriteLine("EventSpool.Purge: dequeue failed, giving up: " + e);
-								return;
-							}
-
-							if (item == null)
-								return;
-
-							session.Flush();
-						}
+						_queue?.Dispose();
 					}
+					finally
+					{
+						_queue = null;
+					}
+
+					if (Directory.Exists(_spoolDirectory))
+						Directory.Delete(_spoolDirectory, true);
+
+					_queue = PersistentQueue.WaitFor(_spoolDirectory, s_lockWaitTimeout);
 				}
 			}
 			catch (Exception e)

@@ -40,8 +40,8 @@ namespace DesktopAnalyticsTests
 
 		private static AnalyticsEvent MakeEvent(string name = "Save")
 		{
-			return AnalyticsEvent.Create("user-1", name, null, () => "insert-id-1",
-				() => DateTimeOffset.UtcNow);
+			return AnalyticsEvent.Create("user-1", name, null, "insert-id-1",
+				DateTimeOffset.UtcNow);
 		}
 
 		[Test]

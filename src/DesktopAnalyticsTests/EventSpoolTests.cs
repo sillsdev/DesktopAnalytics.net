@@ -1,23 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading.Tasks;
+using System.Threading;
 using DesktopAnalytics;
 using NUnit.Framework;
 
 namespace DesktopAnalyticsTests
 {
-	// NOTE on the "corrupt/partial spool" edge case (power loss mid-write): we do not add a test
-	// for this here. Simulating it deterministically would mean hand-crafting a truncated
-	// transaction-log file matching DiskQueue's private on-disk format, which is not part of its
-	// public contract and would make the test brittle against DiskQueue version upgrades. This
-	// case is covered by DiskQueue's own transactional recovery instead: entries are only
-	// discoverable after a matching start/end transaction marker pair is written, so a partial
-	// write from a crash mid-transaction leaves an incomplete transaction that DiskQueue's own
-	// recovery skips on next open, without our code doing anything special. Separately,
-	// EventSpool.ProcessBatch guards against an individual entry that deserializes badly (e.g. an
-	// unreadable/incompatible schema version) by flushing (dropping) it like a poison message
-	// rather than wedging the spool -- see EventSpool.cs.
+	// NOTE on the "corrupt/partial spool" edge case (power loss mid-write): rather than
+	// hand-crafting a truncated transaction-log file matching DiskQueue's private on-disk format
+	// (which would couple this suite to internals that may change between DiskQueue versions),
+	// test 10 below appends format-agnostic garbage bytes to the transaction log and asserts the
+	// spool survives -- exercising DiskQueue's transactional recovery (entries are only
+	// discoverable after a matching start/end transaction marker pair) without depending on what
+	// the markers look like. Separately, EventSpool.ProcessBatch guards against an individual
+	// entry that deserializes badly (e.g. an unreadable/incompatible schema version) by flushing
+	// (dropping) it like a poison message rather than wedging the spool -- see EventSpool.cs.
 	[TestFixture]
 	public class EventSpoolTests
 	{
@@ -52,6 +50,31 @@ namespace DesktopAnalyticsTests
 		private static AnalyticsEvent MakeEvent(string name)
 		{
 			return AnalyticsEvent.Create("user-1", name);
+		}
+
+		// Reads every file under the spool directory that can be opened for shared reading.
+		// DiskQueue holds its 'lock' file open exclusively while the spool is open; that file
+		// only ever contains a process id, never event data, so skipping unopenable files does
+		// not weaken any event-content assertion.
+		internal static IEnumerable<KeyValuePair<string, string>> ReadableSpoolFiles(string spoolDir)
+		{
+			foreach (var file in Directory.GetFiles(spoolDir, "*", SearchOption.AllDirectories))
+			{
+				string content;
+				try
+				{
+					using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read,
+						       FileShare.ReadWrite | FileShare.Delete))
+					using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
+						content = reader.ReadToEnd();
+				}
+				catch (IOException)
+				{
+					continue; // DiskQueue's exclusively-held lock file.
+				}
+
+				yield return new KeyValuePair<string, string>(file, content);
+			}
 		}
 
 		// 1. RESTART DURABILITY: enqueue N, dispose, reopen a NEW spool on the same directory --
@@ -239,8 +262,46 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// 7b. Purge leaves the spool fully usable: new events can be enqueued in the same
+		// session, only they survive a dispose/reopen, and the purged events' bytes are gone
+		// from the on-disk files once the spool is closed (the privacy property of a consent
+		// purge -- DiskQueue trims consumed entries rather than retaining them).
+		[Test]
+		public void Purge_ThenEnqueue_SpoolRemainsUsableAndPurgedBytesAreGoneFromDisk()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				spool.Enqueue(MakeEvent("PrePurgeSecret"));
+				Assert.AreEqual(1, spool.ApproximateCount);
+
+				spool.Purge();
+				Assert.AreEqual(0, spool.ApproximateCount);
+
+				spool.Enqueue(MakeEvent("PostPurge"));
+				Assert.AreEqual(1, spool.ApproximateCount);
+			}
+
+			foreach (var file in ReadableSpoolFiles(_spoolDir))
+			{
+				StringAssert.DoesNotContain("PrePurgeSecret", file.Value,
+					"a consent purge must remove event data from disk, not just mark it consumed: " + file.Key);
+			}
+
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				var delivered = new List<string>();
+				reopened.ProcessBatch(10, evt =>
+				{
+					delivered.Add(evt.EventName);
+					return SendResult.Delivered;
+				});
+				CollectionAssert.AreEqual(new[] { "PostPurge" }, delivered);
+			}
+		}
+
 		// 8. Concurrent enqueue from multiple threads (single process): 4 threads x 25 events =>
-		// all 100 persisted.
+		// all 100 persisted. Dedicated Threads (not Task.Run) so the intended parallelism is
+		// explicit rather than at the mercy of thread-pool scheduling.
 		[Test]
 		public void Enqueue_FromMultipleThreadsConcurrently_AllEventsPersisted()
 		{
@@ -249,18 +310,21 @@ namespace DesktopAnalyticsTests
 
 			using (var spool = new EventSpool(_spoolDir, threadCount * perThread))
 			{
-				var tasks = new Task[threadCount];
+				var threads = new Thread[threadCount];
 				for (var t = 0; t < threadCount; t++)
 				{
 					var threadIndex = t;
-					tasks[t] = Task.Run(() =>
+					threads[t] = new Thread(() =>
 					{
 						for (var i = 0; i < perThread; i++)
 							spool.Enqueue(MakeEvent($"T{threadIndex}-{i}"));
 					});
 				}
 
-				Task.WaitAll(tasks);
+				foreach (var thread in threads)
+					thread.Start();
+				foreach (var thread in threads)
+					thread.Join();
 
 				Assert.AreEqual(threadCount * perThread, spool.ApproximateCount);
 
@@ -272,6 +336,38 @@ namespace DesktopAnalyticsTests
 					return SendResult.Delivered;
 				});
 				Assert.AreEqual(threadCount * perThread, seen.Count);
+			}
+		}
+
+		// 8b. ProcessBatch honors maxItems: with more events spooled than the batch size, exactly
+		// maxItems are attempted per call and the rest stay put for the next call.
+		[Test]
+		public void ProcessBatch_MoreEventsThanMaxItems_AttemptsExactlyMaxItemsPerCall()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				for (var i = 0; i < 5; i++)
+					spool.Enqueue(MakeEvent("Event-" + i));
+
+				var firstBatch = new List<string>();
+				spool.ProcessBatch(2, evt =>
+				{
+					firstBatch.Add(evt.EventName);
+					return SendResult.Delivered;
+				});
+
+				CollectionAssert.AreEqual(new[] { "Event-0", "Event-1" }, firstBatch);
+				Assert.AreEqual(3, spool.ApproximateCount);
+
+				var secondBatch = new List<string>();
+				spool.ProcessBatch(2, evt =>
+				{
+					secondBatch.Add(evt.EventName);
+					return SendResult.Delivered;
+				});
+
+				CollectionAssert.AreEqual(new[] { "Event-2", "Event-3" }, secondBatch);
+				Assert.AreEqual(1, spool.ApproximateCount);
 			}
 		}
 
@@ -296,5 +392,77 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// 10. CORRUPTION, torn data-file write: garbage appended to a data file (bytes beyond the
+		// extents any committed transaction references) must not prevent reopening the spool, and
+		// events from committed transactions must still be readable. Appending garbage -- rather
+		// than hand-crafting file contents -- keeps this test independent of DiskQueue's private
+		// on-disk format (see the NOTE at the top of this fixture).
+		[Test]
+		public void Constructor_GarbageAppendedToDataFile_SpoolReopensAndCommittedEventsSurvive()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				spool.Enqueue(MakeEvent("Committed-1"));
+				spool.Enqueue(MakeEvent("Committed-2"));
+			} // Disposed: both enqueues are fully committed transactions on disk.
+
+			AppendGarbageTo(FindSpoolFile("data.0"));
+
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				var delivered = new List<string>();
+				reopened.ProcessBatch(10, evt =>
+				{
+					delivered.Add(evt.EventName);
+					return SendResult.Delivered;
+				});
+				CollectionAssert.AreEqual(new[] { "Committed-1", "Committed-2" }, delivered);
+
+				// And the recovered spool must still accept new work.
+				reopened.Enqueue(MakeEvent("PostRecovery"));
+				Assert.AreEqual(1, reopened.ApproximateCount);
+			}
+		}
+
+		// 10b. CORRUPTION, garbage in the transaction log: DiskQueue deliberately refuses to open
+		// a log with unrecognized trailing bytes (it recovers a TRUNCATED log -- the realistic
+		// power-loss shape, where entries simply end mid-transaction -- but treats garbage after a
+		// committed entry as a conflict). Pin that fail-fast behavior here: the constructor throws
+		// rather than silently serving corrupt data. At the client level this is already handled:
+		// MixpanelClient.Initialize catches the throw and degrades to a non-durable no-op client
+		// rather than crashing the host (see MixpanelClient's class remarks).
+		[Test]
+		public void Constructor_GarbageAppendedToTransactionLog_FailsFastRatherThanServingCorruptData()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				spool.Enqueue(MakeEvent("Committed-1"));
+			}
+
+			AppendGarbageTo(FindSpoolFile("transaction.log"));
+
+			Assert.Catch<Exception>(() =>
+			{
+				using (new EventSpool(_spoolDir, 10))
+				{
+				}
+			});
+		}
+
+		private string FindSpoolFile(string fileName)
+		{
+			var path = Path.Combine(_spoolDir, fileName);
+			Assert.IsTrue(File.Exists(path),
+				"expected DiskQueue file at " + path + " -- if DiskQueue renamed it, update this test");
+			return path;
+		}
+
+		private static void AppendGarbageTo(string path)
+		{
+			var garbage = new byte[257];
+			new Random(12345).NextBytes(garbage);
+			using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write))
+				stream.Write(garbage, 0, garbage.Length);
+		}
 	}
 }

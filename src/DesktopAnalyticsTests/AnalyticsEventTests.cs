@@ -99,8 +99,8 @@ namespace DesktopAnalyticsTests
 				"abc-123",
 				"Launch",
 				new JsonObject { { "Version", "1.2.3" } },
-				insertIdFactory: () => fixedInsertId,
-				clock: () => fixedTime
+				insertId: fixedInsertId,
+				time: fixedTime
 			);
 
 			Assert.AreEqual("abc-123", evt.AnalyticsId);
@@ -123,7 +123,7 @@ namespace DesktopAnalyticsTests
 		public void Create_WithNullProperties_ProducesEmptyPropertyBag()
 		{
 			var evt = AnalyticsEvent.Create("abc-123", "Launch", null,
-				() => "insert-id", () => DateTimeOffset.UtcNow);
+				"insert-id", DateTimeOffset.UtcNow);
 
 			Assert.IsNotNull(evt.Properties);
 			Assert.AreEqual(0, evt.Properties.Count);

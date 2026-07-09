@@ -52,7 +52,12 @@ namespace DesktopAnalytics
 		private Mixpanel.MixpanelClient _identifyClient;
 		private Timer _flushTimer;
 		private int _batchSize = kDefaultBatchSize;
-		private int _flushIntervalSeconds = kDefaultFlushIntervalSeconds;
+		// Normalized once in Initialize (clamped to >= 1s there); everywhere else just reads it.
+		private TimeSpan _flushInterval = TimeSpan.FromSeconds(kDefaultFlushIntervalSeconds);
+		// Set by Initialize/InitializeForTest. Track() throws if this is still false -- calling
+		// Track on a never-initialized client is a programming error in the host, matching the
+		// pre-durability behavior (the old client dereferenced a null field there).
+		private bool _initialized;
 		// Paused == consent revoked (see PurgeQueuedEvents): the poll timer is stopped and opportunistic
 		// network-change kicks are ignored until ResumeSending re-enables them.
 		private volatile bool _paused;
@@ -61,9 +66,11 @@ namespace DesktopAnalytics
 		private int _succeeded;
 		private int _failed;
 
-		// Guards against a background timer tick re-entering DrainOnce while a previous tick (or an
-		// explicit Flush/ShutDown) is still running. DrainOnce() itself is NOT guarded by this --
-		// tests call it directly and expect exactly one pass per call.
+		// Guards only against overlapping TIMER ticks: if a previous tick's drain is still running
+		// when the next tick fires, the new tick is skipped. It does NOT serialize ticks against
+		// Flush/ShutDown/DrainOnce -- those may run concurrently with a tick, which is safe because
+		// all spool access is serialized inside EventSpool (its _syncRoot lock); this flag just
+		// keeps a slow drain from stacking up redundant timer callbacks behind it.
 		private int _timerDraining;
 
 		/// <summary>
@@ -82,10 +89,14 @@ namespace DesktopAnalytics
 			if (!string.IsNullOrEmpty(host))
 				throw new ArgumentException("MixpanelClient does not currently support a host parameter", nameof(host));
 
+			_initialized = true;
+
 			try
 			{
 				_batchSize = flushAt > 0 ? flushAt : kDefaultBatchSize;
-				_flushIntervalSeconds = flushInterval > 0 ? flushInterval : kDefaultFlushIntervalSeconds;
+				// Clamp to >= 1s once, here, so every later consumer can use the value as-is.
+				_flushInterval = TimeSpan.FromSeconds(
+					Math.Max(1, flushInterval > 0 ? flushInterval : kDefaultFlushIntervalSeconds));
 
 				_timeProvider = TimeProvider.System;
 				_spool = new EventSpool(EventSpool.GetDefaultSpoolPath(apiSecret), kDefaultMaxSpoolItems);
@@ -130,6 +141,7 @@ namespace DesktopAnalytics
 			ResiliencePipeline<SendResult> pipeline = null,
 			int batchSize = kDefaultBatchSize)
 		{
+			_initialized = true;
 			_spool = spool;
 			_sender = sender;
 			_timeProvider = timeProvider ?? TimeProvider.System;
@@ -193,12 +205,12 @@ namespace DesktopAnalytics
 		{
 			try
 			{
-				var interval = TimeSpan.FromSeconds(Math.Max(1, _flushIntervalSeconds));
 				// Fire the first drain soon after launch (bounded by the interval) so events left in the
 				// spool by a previous offline session are attempted promptly, not a full interval later.
-				var initialDelay = TimeSpan.FromSeconds(Math.Min(kInitialFlushDelaySeconds, Math.Max(1, _flushIntervalSeconds)));
+				var initialDelay = TimeSpan.FromTicks(
+					Math.Min(TimeSpan.FromSeconds(kInitialFlushDelaySeconds).Ticks, _flushInterval.Ticks));
 				_paused = false;
-				_flushTimer = new Timer(_ => OnTimerTick(), null, initialDelay, interval);
+				_flushTimer = new Timer(_ => OnTimerTick(), null, initialDelay, _flushInterval);
 			}
 			catch (Exception e)
 			{
@@ -245,8 +257,7 @@ namespace DesktopAnalytics
 				if (!NetworkInterface.GetIsNetworkAvailable())
 					return;
 				_flushTimer?.Change(
-					TimeSpan.FromSeconds(kReconnectFlushDelaySeconds),
-					TimeSpan.FromSeconds(Math.Max(1, _flushIntervalSeconds)));
+					TimeSpan.FromSeconds(kReconnectFlushDelaySeconds), _flushInterval);
 			}
 			catch (Exception ex)
 			{
@@ -385,10 +396,20 @@ namespace DesktopAnalytics
 		/// Scrubs the event name and every string property value (this is where stack traces --
 		/// spooled as the "Stack Trace" property of the "Exception" event -- get their embedded user
 		/// paths normalized), stamps $insert_id/time via <see cref="AnalyticsEvent.Create"/>, and
-		/// enqueues into the spool. Never throws.
+		/// enqueues into the spool. Never throws once initialized; calling it on a client that was
+		/// never initialized at all is a programming error in the host and throws (matching the
+		/// original MixpanelClient, which dereferenced a null field in that case).
 		/// </summary>
 		public void Track(string analyticsId, string eventName, JsonObject properties)
 		{
+			// Deliberately OUTSIDE the catch-all below: a never-initialized client must surface the
+			// programming error rather than silently dropping every event. Distinct from _spool ==
+			// null, which means Initialize ran but the spool could not be created (e.g. another
+			// instance holds the cross-process lock) -- that case degrades to a no-op by design.
+			if (!_initialized)
+				throw new InvalidOperationException(
+					"MixpanelClient.Track called before Initialize");
+
 			try
 			{
 				if (_spool == null)
@@ -401,7 +422,7 @@ namespace DesktopAnalytics
 					analyticsId,
 					scrubbedName,
 					scrubbedProperties,
-					clock: () => _timeProvider.GetUtcNow());
+					time: _timeProvider.GetUtcNow());
 
 				_spool.Enqueue(evt);
 				Interlocked.Increment(ref _submitted);
@@ -440,12 +461,14 @@ namespace DesktopAnalytics
 		/// accepts the TCP connection but never responds -- captive portals and some firewalls do
 		/// this), which the plain <see cref="DrainOnce"/> path is not:
 		/// <list type="bullet">
-		/// <item>Each attempt gets its own <see cref="CancellationTokenSource"/> tied to the
-		/// <em>remaining</em> wall-clock budget, passed all the way down to
+		/// <item>A single <see cref="CancellationTokenSource"/> covering the whole wall-clock
+		/// budget is shared by every attempt, passed all the way down to
 		/// <see cref="System.Net.Http.HttpClient"/> via <see cref="IEventSender.Send"/>. Without
 		/// this, the deadline below is only checked BETWEEN attempts -- one hanging attempt could
 		/// run as long as the sender's own retry-multiplied HTTP timeout (e.g. 3 attempts x a 15s
-		/// HttpClient timeout ~= 45s) before the bound is ever checked.</item>
+		/// HttpClient timeout ~= 45s) before the bound is ever checked. Created via the injected
+		/// <see cref="TimeProvider"/> (not <c>new CancellationTokenSource(delay)</c>, which only
+		/// knows the system clock) so tests keep deterministic control of the deadline.</item>
 		/// <item>Retries are bypassed (<c>usePipeline: false</c>): retrying during a bounded
 		/// shutdown/flush has little delivery value (we are about to give up on this attempt
 		/// anyway) and would multiply -- rather than bound -- the time spent waiting on a hanging
@@ -459,18 +482,16 @@ namespace DesktopAnalytics
 
 			try
 			{
-				var deadline = _timeProvider.GetUtcNow() + s_boundedDrainDuration;
-				for (var i = 0; i < kBoundedDrainMaxAttempts; i++)
+				using (var cts = _timeProvider.CreateCancellationTokenSource(s_boundedDrainDuration))
 				{
-					if (_spool.ApproximateCount <= 0)
-						return;
-
-					var remaining = deadline - _timeProvider.GetUtcNow();
-					if (remaining <= TimeSpan.Zero)
-						return;
-
-					using (var cts = new CancellationTokenSource(remaining))
+					for (var i = 0; i < kBoundedDrainMaxAttempts; i++)
 					{
+						if (cts.IsCancellationRequested)
+							return;
+
+						if (_spool.ApproximateCount <= 0)
+							return;
+
 						DrainOnceCore(cts.Token, usePipeline: false);
 					}
 				}
@@ -555,8 +576,7 @@ namespace DesktopAnalytics
 				// timer was never started (deferred init); reschedule only if there is a live timer.
 				_paused = false;
 				_flushTimer?.Change(
-					TimeSpan.FromSeconds(kReconnectFlushDelaySeconds),
-					TimeSpan.FromSeconds(Math.Max(1, _flushIntervalSeconds)));
+					TimeSpan.FromSeconds(kReconnectFlushDelaySeconds), _flushInterval);
 			}
 			catch (Exception e)
 			{
