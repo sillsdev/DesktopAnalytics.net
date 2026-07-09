@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace DesktopAnalytics
 {
 	/// <summary>
@@ -19,6 +21,11 @@ namespace DesktopAnalytics
 		/// thread/timer, never on the UI thread. Implementations that need to talk to the network
 		/// asynchronously (e.g. via <see cref="System.Net.Http.HttpClient"/>) may block internally.
 		/// </summary>
-		SendResult Send(AnalyticsEvent evt);
+		/// <param name="cancellationToken">Allows a bounded caller (see
+		/// <see cref="MixpanelClient"/>'s BoundedDrain, used by Flush/ShutDown) to abandon a send
+		/// that is taking too long -- e.g. a server that accepts the connection but never responds
+		/// (a "black hole"). Implementations should treat cancellation like any other transient
+		/// failure and return <see cref="SendResult.RetryableFailure"/> rather than throwing.</param>
+		SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default);
 	}
 }

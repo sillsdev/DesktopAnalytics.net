@@ -167,7 +167,14 @@ namespace DesktopAnalytics
 			{
 				ShouldHandle = args => new ValueTask<bool>(ShouldHandleOutcome(args.Outcome)),
 				FailureRatio = 0.5,
-				MinimumThroughput = 4,
+				// Matches attempts-per-tick: a fully failing DrainOnce tick produces exactly 3
+				// outcomes through this pipeline (1 initial attempt + MaxRetryAttempts=2 retries),
+				// all within the same instant, so all 3 always land in one SamplingDuration window.
+				// With this at 4 (the previous value), a single tick could never reach the minimum
+				// throughput -- and successive ticks are kDefaultFlushIntervalSeconds (30s) apart,
+				// far outside the 10s window -- so the breaker could never open at all during a
+				// sustained outage. 3 makes one bad tick enough to trip it.
+				MinimumThroughput = 3,
 				SamplingDuration = TimeSpan.FromSeconds(10),
 				BreakDuration = TimeSpan.FromSeconds(5)
 			};
@@ -271,13 +278,22 @@ namespace DesktopAnalytics
 		/// One-shot attempt to deliver up to one batch of spooled events. This is exactly what the
 		/// background timer calls on each tick; tests call it directly to pump the flush loop
 		/// deterministically instead of racing a real timer (see offline-analytics.md, "Flush-loop
-		/// scheduling" in the design-for-test-seams table).
+		/// scheduling" in the design-for-test-seams table). Always goes through the full Polly
+		/// pipeline (retry + circuit breaker) with no cancellation -- <see cref="BoundedDrain"/> is
+		/// the bounded/cancellable variant used by Flush/ShutDown.
 		/// </summary>
 		internal void DrainOnce()
 		{
+			DrainOnceCore(CancellationToken.None, usePipeline: true);
+		}
+
+		// Shared implementation behind DrainOnce() and BoundedDrain(). usePipeline is false only for
+		// BoundedDrain's bounded attempts (see its comment for why retries are skipped there).
+		private void DrainOnceCore(CancellationToken cancellationToken, bool usePipeline)
+		{
 			try
 			{
-				_spool?.ProcessBatch(_batchSize, SendOneEventThroughPipeline);
+				_spool?.ProcessBatch(_batchSize, evt => SendOneEvent(evt, cancellationToken, usePipeline));
 			}
 			catch (Exception e)
 			{
@@ -288,20 +304,31 @@ namespace DesktopAnalytics
 		// The callback EventSpool.ProcessBatch invokes per dequeued event. Must never throw (see
 		// EventSpool.ProcessBatch's contract: a thrown exception is treated as a RetryableFailure
 		// anyway, but returning it directly avoids relying on that fallback).
-		private SendResult SendOneEventThroughPipeline(AnalyticsEvent evt)
+		private SendResult SendOneEvent(AnalyticsEvent evt, CancellationToken cancellationToken, bool usePipeline)
 		{
 			try
 			{
 				SendResult result;
 				try
 				{
-					result = _pipeline.Execute(() => _sender.Send(evt));
+					result = usePipeline
+						? _pipeline.Execute(ct => _sender.Send(evt, ct), cancellationToken)
+						: _sender.Send(evt, cancellationToken);
 				}
 				catch (BrokenCircuitException e)
 				{
 					// Circuit is open from a sustained outage -- back off without even trying the
 					// network this round. Leave the event for a later retry.
 					Debug.WriteLine("MixpanelClient: circuit breaker open, leaving event for retry: " + e);
+					return SendResult.RetryableFailure;
+				}
+				catch (OperationCanceledException e)
+				{
+					// BoundedDrain's per-attempt deadline (see its comment) fired before the sender
+					// finished -- treat exactly like any other transient failure so the event stays
+					// spooled for the next drain, rather than letting this hang or throw into the host.
+					Debug.WriteLine(
+						"MixpanelClient: send canceled (bounded drain deadline), leaving event for retry: " + e);
 					return SendResult.RetryableFailure;
 				}
 
@@ -403,11 +430,28 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Bounded drain: repeatedly calls <see cref="DrainOnce"/> until the spool is empty or a
-		/// bound (wall-clock duration or attempt count) is hit, then returns. Used by both
+		/// Bounded drain: repeatedly attempts a drain until the spool is empty or a bound
+		/// (wall-clock duration or attempt count) is hit, then returns. Used by both
 		/// <see cref="Flush"/> and <see cref="ShutDown"/> so an offline flush/shutdown returns fast
 		/// instead of hanging the host.
 		/// </summary>
+		/// <remarks>
+		/// Two things make this provably bounded even against a "black hole" server (one that
+		/// accepts the TCP connection but never responds -- captive portals and some firewalls do
+		/// this), which the plain <see cref="DrainOnce"/> path is not:
+		/// <list type="bullet">
+		/// <item>Each attempt gets its own <see cref="CancellationTokenSource"/> tied to the
+		/// <em>remaining</em> wall-clock budget, passed all the way down to
+		/// <see cref="System.Net.Http.HttpClient"/> via <see cref="IEventSender.Send"/>. Without
+		/// this, the deadline below is only checked BETWEEN attempts -- one hanging attempt could
+		/// run as long as the sender's own retry-multiplied HTTP timeout (e.g. 3 attempts x a 15s
+		/// HttpClient timeout ~= 45s) before the bound is ever checked.</item>
+		/// <item>Retries are bypassed (<c>usePipeline: false</c>): retrying during a bounded
+		/// shutdown/flush has little delivery value (we are about to give up on this attempt
+		/// anyway) and would multiply -- rather than bound -- the time spent waiting on a hanging
+		/// server.</item>
+		/// </list>
+		/// </remarks>
 		private void BoundedDrain()
 		{
 			if (_spool == null)
@@ -420,10 +464,15 @@ namespace DesktopAnalytics
 				{
 					if (_spool.ApproximateCount <= 0)
 						return;
-					if (_timeProvider.GetUtcNow() >= deadline)
+
+					var remaining = deadline - _timeProvider.GetUtcNow();
+					if (remaining <= TimeSpan.Zero)
 						return;
 
-					DrainOnce();
+					using (var cts = new CancellationTokenSource(remaining))
+					{
+						DrainOnceCore(cts.Token, usePipeline: false);
+					}
 				}
 			}
 			catch (Exception e)

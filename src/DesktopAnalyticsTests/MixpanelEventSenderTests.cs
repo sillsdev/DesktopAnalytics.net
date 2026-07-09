@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using DesktopAnalytics;
 using NUnit.Framework;
 using WireMock.RequestBuilders;
@@ -134,6 +136,95 @@ namespace DesktopAnalyticsTests
 				new HttpClient { Timeout = TimeSpan.FromSeconds(5) });
 
 			Assert.AreEqual(SendResult.RetryableFailure, sender.Send(MakeEvent()));
+		}
+
+		// ---- CAPTIVE PORTAL (redirect handling) --------------------------------------------------
+
+		[Test]
+		public void Send_302Response_ReturnsRetryableFailureAndDoesNotFollowRedirect()
+		{
+			// Simulates a captive portal intercepting the POST and redirecting to its login page.
+			_server.Given(Request.Create().WithPath("/track").UsingPost())
+				.RespondWith(Response.Create()
+					.WithStatusCode(302)
+					.WithHeader("Location", "/portal-login"));
+			_server.Given(Request.Create().WithPath("/portal-login"))
+				.RespondWith(Response.Create().WithStatusCode(200));
+
+			var sender = new MixpanelEventSender("secret", _server.Urls[0]);
+
+			Assert.AreEqual(SendResult.RetryableFailure, sender.Send(MakeEvent()));
+
+			// The key assertion: AllowAutoRedirect must be disabled, so the portal's login page is
+			// never actually requested. If it were followed, this sender would see the portal's 200
+			// and wrongly classify the event as Delivered even though Mixpanel never received it.
+			Assert.IsFalse(_server.LogEntries.Any(e => e.RequestMessage.Path == "/portal-login"),
+				"the redirect target must never have been requested (AllowAutoRedirect must be false)");
+		}
+
+		// ---- MIXPANEL'S "0" REJECTION SENTINEL ----------------------------------------------------
+
+		[Test]
+		public void Send_200ResponseWithBodyZero_ReturnsPoisonDrop()
+		{
+			// Mixpanel's /track returns HTTP 200 with a body of "0" for a payload it rejected.
+			_server.Given(Request.Create().WithPath("/track").UsingPost())
+				.RespondWith(Response.Create().WithStatusCode(200).WithBody("0"));
+
+			var sender = new MixpanelEventSender("secret", _server.Urls[0]);
+
+			Assert.AreEqual(SendResult.PoisonDrop, sender.Send(MakeEvent()));
+		}
+
+		[Test]
+		public void Send_200ResponseWithBodyOne_ReturnsDelivered()
+		{
+			_server.Given(Request.Create().WithPath("/track").UsingPost())
+				.RespondWith(Response.Create().WithStatusCode(200).WithBody("1"));
+
+			var sender = new MixpanelEventSender("secret", _server.Urls[0]);
+
+			Assert.AreEqual(SendResult.Delivered, sender.Send(MakeEvent()));
+		}
+
+		// ---- CANCELLATION (bounded drain deadline) ------------------------------------------------
+
+		[Test]
+		public void Send_PreCancelledToken_ReturnsRetryableFailureAndDoesNotThrow()
+		{
+			_server.Given(Request.Create().WithPath("/track").UsingPost())
+				.RespondWith(Response.Create().WithStatusCode(200));
+
+			var sender = new MixpanelEventSender("secret", _server.Urls[0]);
+
+			SendResult result = SendResult.Delivered;
+			using (var cts = new CancellationTokenSource())
+			{
+				cts.Cancel();
+				Assert.DoesNotThrow(() => result = sender.Send(MakeEvent(), cts.Token));
+			}
+
+			Assert.AreEqual(SendResult.RetryableFailure, result);
+		}
+
+		[Test]
+		public void Send_ShortDeadlineAgainstDelayedResponse_ReturnsRetryableFailureAndDoesNotThrow()
+		{
+			// Simulates a "black hole" server: it eventually responds, but not before our deadline
+			// (BoundedDrain's per-attempt CancellationTokenSource, in production) fires.
+			_server.Given(Request.Create().WithPath("/track").UsingPost())
+				.RespondWith(Response.Create().WithStatusCode(200).WithDelay(TimeSpan.FromSeconds(5)));
+
+			var sender = new MixpanelEventSender("secret", _server.Urls[0],
+				new HttpClient { Timeout = TimeSpan.FromSeconds(30) });
+
+			SendResult result = SendResult.Delivered;
+			using (var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200)))
+			{
+				Assert.DoesNotThrow(() => result = sender.Send(MakeEvent(), cts.Token));
+			}
+
+			Assert.AreEqual(SendResult.RetryableFailure, result);
 		}
 
 		[Test]

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using DesktopAnalytics;
 using NUnit.Framework;
@@ -54,7 +55,7 @@ namespace DesktopAnalyticsTests
 				_script = new Queue<Func<AnalyticsEvent, SendResult>>(script);
 			}
 
-			public SendResult Send(AnalyticsEvent evt)
+			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				Sent.Add(evt);
 				var step = _script.Count > 0 ? _script.Dequeue() : (_ => SendResult.Delivered);
@@ -72,7 +73,7 @@ namespace DesktopAnalyticsTests
 				_result = result;
 			}
 
-			public SendResult Send(AnalyticsEvent evt)
+			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				CallCount++;
 				return _result;
@@ -81,9 +82,26 @@ namespace DesktopAnalyticsTests
 
 		private class ThrowingSender : IEventSender
 		{
-			public SendResult Send(AnalyticsEvent evt)
+			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				throw new InvalidOperationException("simulated sender failure");
+			}
+		}
+
+		// Simulates a "black hole" server (accepts the connection but never responds): blocks until
+		// its CancellationToken is signaled -- exactly what BoundedDrain's per-attempt deadline does
+		// -- then reports the send as failed. Guards against ever being handed a token that can't be
+		// canceled, which would otherwise hang the whole test run rather than just fail one test.
+		private class BlockingUntilCanceledSender : IEventSender
+		{
+			public int CallCount;
+
+			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+			{
+				Interlocked.Increment(ref CallCount);
+				if (cancellationToken.CanBeCanceled)
+					cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(10));
+				return SendResult.RetryableFailure;
 			}
 		}
 
@@ -354,6 +372,67 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// ---- BOUNDED SHUTDOWN/FLUSH AGAINST A "BLACK HOLE" SERVER --------------------------------
+		//
+		// Regression coverage for the bug where BoundedDrain's 5s wall-clock bound was only checked
+		// BETWEEN DrainOnce calls: a server that accepts the connection but never responds could
+		// make a single DrainOnce take up to ~45s (3 attempts x a 15s HttpClient timeout) before the
+		// bound was ever consulted, hanging ShutDown()/Flush(). These use a sender that blocks until
+		// the CancellationToken BoundedDrain hands it is canceled, which only happens promptly if
+		// the per-attempt deadline is actually wired through.
+
+		[Test]
+		public void ShutDown_SenderBlocksUntilCanceled_ReturnsWithinBoundAndEventRemainsInSpool()
+		{
+			var spool = new EventSpool(_spoolDir, 10);
+			var sender = new BlockingUntilCanceledSender();
+			var client = new MixpanelClient();
+			client.InitializeForTest(spool, sender);
+
+			client.Track("user-1", "Save", null);
+
+			var stopwatch = Stopwatch.StartNew();
+			var completed = Task.Run(() => client.ShutDown()).Wait(TimeSpan.FromSeconds(10));
+			stopwatch.Stop();
+
+			Assert.IsTrue(completed, "ShutDown() did not return within the outer test timeout");
+			Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(10),
+				"ShutDown() must be bounded even against a server that never responds");
+			Assert.GreaterOrEqual(sender.CallCount, 1);
+
+			// ShutDown() must have released the spool's cross-process lock -- reopening it and
+			// finding the event proves nothing was lost (it was rolled back, not flushed) and that
+			// the lock really was released.
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				Assert.AreEqual(1, reopened.ApproximateCount,
+					"the undelivered event must remain in the spool after a bounded shutdown");
+			}
+		}
+
+		[Test]
+		public void Flush_SenderBlocksUntilCanceled_ReturnsWithinBoundAndEventRemainsInSpool()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new BlockingUntilCanceledSender();
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "Save", null);
+
+				var stopwatch = Stopwatch.StartNew();
+				var completed = Task.Run(() => client.Flush()).Wait(TimeSpan.FromSeconds(10));
+				stopwatch.Stop();
+
+				Assert.IsTrue(completed, "Flush() did not return within the outer test timeout");
+				Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(10),
+					"Flush() must be bounded even against a server that never responds");
+				Assert.AreEqual(1, spool.ApproximateCount,
+					"the undelivered event must remain in the spool after a bounded flush");
+			}
+		}
+
 		// ---- STATISTICS -------------------------------------------------------------------------
 
 		[Test]
@@ -414,9 +493,9 @@ namespace DesktopAnalyticsTests
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
 				var sender = new AlwaysResultSender(SendResult.RetryableFailure);
-				// MinimumThroughput=4 by default: force enough failing attempts through quickly
-				// (small batch, zero delay) to trip the breaker, then verify a further drain of a
-				// fresh event does not even reach the sender.
+				// MinimumThroughput=3 by default (see BuildDefaultPipeline): force enough failing
+				// attempts through quickly (small batch, zero delay) to trip the breaker, then verify
+				// a further drain of a fresh event does not even reach the sender.
 				// MaxRetryAttempts must be >= 1 (Polly validates this); 1 is close enough to "no
 				// retry" for this test's purposes -- what matters is that sender calls stop growing
 				// once the breaker trips, not the exact attempt count.
@@ -441,6 +520,39 @@ namespace DesktopAnalyticsTests
 				// RetryableFailure (leaving the event spooled) WITHOUT invoking the sender again.
 				Assert.AreEqual(callsAfterWarmup, sender.CallCount,
 					"once the circuit breaker is open, the sender must not be called again");
+				Assert.Greater(spool.ApproximateCount, 0);
+			}
+		}
+
+		[Test]
+		public void DrainOnce_WithRealCircuitBreakerAndFixedMinimumThroughput_OpensAfterOneFullyFailingTick()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.RetryableFailure);
+				// Regression test for the bug where MinimumThroughput=4 made the breaker inert: a
+				// fully failing DrainOnce tick produces exactly 3 outcomes (1 attempt + the default
+				// MaxRetryAttempts=2 retries), and successive ticks are 30s apart -- far outside the
+				// 10s sampling window -- so 4 outcomes could never land in the same window during a
+				// real outage. With MinimumThroughput fixed to 3, a single fully-failing tick alone
+				// must be enough to trip the breaker.
+				var pipeline = MixpanelClient.BuildDefaultPipeline(TimeProvider.System, retryDelay: TimeSpan.Zero);
+
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender, pipeline: pipeline, batchSize: 1);
+
+				client.Track("user-1", "Save", null);
+				client.DrainOnce();
+
+				var callsAfterFirstTick = sender.CallCount;
+				Assert.GreaterOrEqual(callsAfterFirstTick, 3,
+					"one fully-failing tick should make at least 3 attempts (1 try + 2 retries)");
+
+				client.Track("user-1", "OneMore", null);
+				client.DrainOnce();
+
+				Assert.AreEqual(callsAfterFirstTick, sender.CallCount,
+					"the breaker should already be open after just one failing tick, so the sender must not be called again");
 				Assert.Greater(spool.ApproximateCount, 0);
 			}
 		}

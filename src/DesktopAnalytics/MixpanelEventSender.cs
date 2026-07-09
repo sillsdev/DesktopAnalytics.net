@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using Segment.Serialization;
 
 namespace DesktopAnalytics
@@ -48,17 +49,29 @@ namespace DesktopAnalytics
 			}
 			else
 			{
-				_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+				// AllowAutoRedirect is disabled deliberately: with the default handler (which follows
+				// redirects), a captive portal (hotel/coffee-shop Wi-Fi login page) that intercepts
+				// this POST would 302 us to its login page, HttpClient would follow it, get back a
+				// harmless 200, and the code below would classify that as Delivered -- silently
+				// losing the event even though Mixpanel never received it. With redirects disabled we
+				// see the raw 3xx instead and can classify it correctly (see the status-code check
+				// below).
+				_httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+					{ Timeout = TimeSpan.FromSeconds(15) };
 				_ownsHttpClient = true;
 			}
 		}
 
 		/// <summary>
 		/// Posts <paramref name="evt"/> to Mixpanel's /track endpoint and classifies the result. Never
-		/// throws: any serialization or network failure is caught and reported as a
+		/// throws: any serialization, network, or cancellation failure is caught and reported as a
 		/// <see cref="SendResult"/> (see class remarks for the classification rules).
 		/// </summary>
-		public SendResult Send(AnalyticsEvent evt)
+		/// <param name="cancellationToken">See <see cref="IEventSender.Send"/>. A bounded caller
+		/// (<see cref="MixpanelClient"/>'s BoundedDrain) uses this to abandon a request against a
+		/// server that accepts the connection but never responds; that is reported as
+		/// <see cref="SendResult.RetryableFailure"/>, exactly like any other transient failure.</param>
+		public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 		{
 			try
 			{
@@ -87,11 +100,21 @@ namespace DesktopAnalytics
 						       "application/x-www-form-urlencoded"))
 					{
 						response = _httpClient
-							.PostAsync(_baseUrl + "/track", content)
+							.PostAsync(_baseUrl + "/track", content, cancellationToken)
 							.ConfigureAwait(false)
 							.GetAwaiter()
 							.GetResult();
 					}
+				}
+				catch (OperationCanceledException e)
+				{
+					// The caller's deadline (see MixpanelClient.BoundedDrain) fired before the server
+					// responded -- most commonly a "black hole" server that accepts the TCP connection
+					// but never replies (captive portals and some firewalls do this). Treat exactly
+					// like any other transient failure: leave the event in the spool for a later
+					// retry rather than throwing into (and hanging) the caller.
+					Debug.WriteLine("MixpanelEventSender.Send: canceled (deadline), will retry: " + e);
+					return SendResult.RetryableFailure;
 				}
 				catch (Exception e)
 				{
@@ -105,7 +128,43 @@ namespace DesktopAnalytics
 				{
 					var status = (int)response.StatusCode;
 					if (status >= 200 && status < 300)
+					{
+						// Mixpanel's /track returns HTTP 200 with a plain-text body of "0" when it
+						// rejects the payload (e.g. malformed data) -- as opposed to "1" for a genuine
+						// accept. A "0" will never succeed on retry, so treat it as poison rather than
+						// Delivered so it cannot silently vanish while never actually landing.
+						try
+						{
+							var body = response.Content.ReadAsStringAsync()
+								.ConfigureAwait(false)
+								.GetAwaiter()
+								.GetResult();
+							if (body != null && body.Trim() == "0")
+								return SendResult.PoisonDrop;
+						}
+						catch (Exception e)
+						{
+							// A body-read failure on an otherwise-successful response shouldn't turn a
+							// delivered event into a retry loop -- fall through and count it Delivered.
+							// At-least-once semantics + $insert_id dedup make an occasional
+							// false-positive here harmless.
+							Debug.WriteLine(
+								"MixpanelEventSender.Send: failed to read 2xx response body, assuming delivered: " +
+								e);
+						}
+
 						return SendResult.Delivered;
+					}
+
+					if (status >= 300 && status < 400)
+					{
+						// With AllowAutoRedirect disabled (see the constructor), a 3xx here means
+						// something intercepted the POST before it reached Mixpanel -- most commonly a
+						// captive portal redirecting to its login page. Mixpanel's /track endpoint
+						// never legitimately redirects, so treat this as an intercepting middlebox:
+						// leave the event spooled for retry instead of risking a misclassification.
+						return SendResult.RetryableFailure;
+					}
 
 					if (status == 408 || status == 429 || status >= 500)
 						return SendResult.RetryableFailure;
@@ -114,6 +173,11 @@ namespace DesktopAnalytics
 					// treat it as a poison message so it cannot wedge the spool.
 					return SendResult.PoisonDrop;
 				}
+			}
+			catch (OperationCanceledException e)
+			{
+				Debug.WriteLine("MixpanelEventSender.Send: canceled (deadline), will retry: " + e);
+				return SendResult.RetryableFailure;
 			}
 			catch (Exception e)
 			{
