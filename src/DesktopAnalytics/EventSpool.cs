@@ -3,13 +3,15 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using DiskQueue;
 
 namespace DesktopAnalytics
 {
 	/// <summary>
 	/// The outcome of attempting to deliver one spooled event, as reported by the caller of
-	/// <see cref="EventSpool.ProcessBatch"/>. This drives whether the event is removed from the
+	/// <see cref="EventSpool.ProcessBatchAsync"/>. This drives whether the event is removed from the
 	/// spool (<see cref="Delivered"/>/<see cref="PoisonDrop"/>) or left in place for a later
 	/// retry (<see cref="RetryableFailure"/>).
 	/// </summary>
@@ -54,10 +56,15 @@ namespace DesktopAnalytics
 		private readonly int _maxItems;
 		private readonly string _spoolDirectory;
 		// Not readonly: Purge replaces the queue wholesale (see its remarks). Always accessed
-		// under _syncRoot. Null only if a Purge-time reopen failed; every public method already
+		// under _sync. Null only if a Purge-time reopen failed; every public method already
 		// catches and logs whatever follows from that.
 		private IPersistentQueue _queue;
-		private readonly object _syncRoot = new object();
+		// Serializes ALL access to _queue, exactly like the lock(_syncRoot) it replaced -- a
+		// SemaphoreSlim because ProcessBatchAsync must hold it across awaits of the send callback,
+		// which a monitor lock cannot. Deliberately never disposed: it holds no unmanaged
+		// resources unless AvailableWaitHandle is touched (it isn't), and disposing it would turn
+		// a benign use-after-Dispose race into ObjectDisposedException noise.
+		private readonly SemaphoreSlim _sync = new SemaphoreSlim(1, 1);
 		private bool _disposed;
 
 		/// <summary>
@@ -120,8 +127,15 @@ namespace DesktopAnalytics
 			{
 				try
 				{
-					lock (_syncRoot)
+					_sync.Wait();
+					try
+					{
 						return _queue.EstimatedCountOfItemsInQueue;
+					}
+					finally
+					{
+						_sync.Release();
+					}
 				}
 				catch (Exception e)
 				{
@@ -155,7 +169,8 @@ namespace DesktopAnalytics
 					return;
 				}
 
-				lock (_syncRoot)
+				_sync.Wait();
+				try
 				{
 					using (var session = _queue.OpenSession())
 					{
@@ -165,6 +180,10 @@ namespace DesktopAnalytics
 
 					EnforceCapLocked();
 				}
+				finally
+				{
+					_sync.Release();
+				}
 			}
 			catch (Exception e)
 			{
@@ -172,7 +191,7 @@ namespace DesktopAnalytics
 			}
 		}
 
-		// Caller must hold _syncRoot. Drops the oldest item(s) one at a time until the queue is at
+		// Caller must hold _sync. Drops the oldest item(s) one at a time until the queue is at
 		// or under _maxItems. Each iteration removes exactly one item (or gives up on a read/dequeue
 		// failure), so this always terminates -- including the degenerate case of _maxItems == 0,
 		// where even the item just enqueued is dropped.
@@ -230,14 +249,15 @@ namespace DesktopAnalytics
 		/// at-least-once delivery -- a sender that delivered the event but crashed/threw before
 		/// this method could flush will see the same event again on the next call.
 		/// </summary>
-		public void ProcessBatch(int maxItems, Func<AnalyticsEvent, SendResult> send)
+		public async Task ProcessBatchAsync(int maxItems, Func<AnalyticsEvent, Task<SendResult>> send)
 		{
 			if (send == null || maxItems <= 0)
 				return;
 
 			try
 			{
-				lock (_syncRoot)
+				await _sync.WaitAsync().ConfigureAwait(false);
+				try
 				{
 					using (var session = _queue.OpenSession())
 					{
@@ -275,7 +295,7 @@ namespace DesktopAnalytics
 							SendResult result;
 							try
 							{
-								result = send(evt);
+								result = await send(evt).ConfigureAwait(false);
 							}
 							catch (Exception e)
 							{
@@ -294,6 +314,10 @@ namespace DesktopAnalytics
 							return;
 						}
 					}
+				}
+				finally
+				{
+					_sync.Release();
 				}
 			}
 			catch (Exception e)
@@ -323,7 +347,8 @@ namespace DesktopAnalytics
 		{
 			try
 			{
-				lock (_syncRoot)
+				_sync.Wait();
+				try
 				{
 					if (_disposed)
 						return;
@@ -341,6 +366,10 @@ namespace DesktopAnalytics
 						Directory.Delete(_spoolDirectory, true);
 
 					_queue = PersistentQueue.WaitFor(_spoolDirectory, s_lockWaitTimeout);
+				}
+				finally
+				{
+					_sync.Release();
 				}
 			}
 			catch (Exception e)
@@ -360,10 +389,15 @@ namespace DesktopAnalytics
 
 			try
 			{
-				lock (_syncRoot)
+				_sync.Wait();
+				try
 				{
 					_disposed = true;
 					_queue?.Dispose();
+				}
+				finally
+				{
+					_sync.Release();
 				}
 			}
 			catch (Exception e)

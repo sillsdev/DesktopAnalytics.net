@@ -12,7 +12,7 @@ namespace DesktopAnalyticsTests
 {
 	// Layer 3 of the fidelity ladder in offline-analytics.md: the real EventSpool (on a temp
 	// folder) driving a real MixpanelClient, with a scripted fake IEventSender standing in for the
-	// network. Tests pump DrainOnce() directly rather than racing the real background timer (see
+	// network. Tests await DrainOnceAsync() directly rather than racing the real background timer (see
 	// "Design-for-test seams" / "Flush-loop scheduling" in offline-analytics.md); InitializeForTest
 	// never starts that timer.
 	[TestFixture]
@@ -55,11 +55,14 @@ namespace DesktopAnalyticsTests
 				_script = new Queue<Func<AnalyticsEvent, SendResult>>(script);
 			}
 
-			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+			public Task<SendResult> SendAsync(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				Sent.Add(evt);
 				var step = _script.Count > 0 ? _script.Dequeue() : (_ => SendResult.Delivered);
-				return step(evt);
+				// Deliberately NOT wrapped in Task.FromResult of a try/catch: a script step that
+				// throws makes this fake violate IEventSender's never-throw contract on purpose,
+				// exactly like the sync fake it replaced -- the crash-window tests rely on it.
+				return Task.FromResult(step(evt));
 			}
 		}
 
@@ -73,34 +76,44 @@ namespace DesktopAnalyticsTests
 				_result = result;
 			}
 
-			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+			public Task<SendResult> SendAsync(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				CallCount++;
-				return _result;
+				return Task.FromResult(_result);
 			}
 		}
 
 		private class ThrowingSender : IEventSender
 		{
-			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+			public Task<SendResult> SendAsync(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				throw new InvalidOperationException("simulated sender failure");
 			}
 		}
 
-		// Simulates a "black hole" server (accepts the connection but never responds): blocks until
-		// its CancellationToken is signaled -- exactly what BoundedDrain's per-attempt deadline does
-		// -- then reports the send as failed. Guards against ever being handed a token that can't be
-		// canceled, which would otherwise hang the whole test run rather than just fail one test.
+		// Simulates a "black hole" server (accepts the connection but never responds): waits until
+		// its CancellationToken is signaled -- exactly what BoundedDrain's deadline does -- then
+		// reports the send as failed. Guards against ever being handed a token that can't be
+		// canceled, which would otherwise stall the whole test run rather than just fail one test.
 		private class BlockingUntilCanceledSender : IEventSender
 		{
 			public int CallCount;
 
-			public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+			public async Task<SendResult> SendAsync(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 			{
 				Interlocked.Increment(ref CallCount);
 				if (cancellationToken.CanBeCanceled)
-					cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(10));
+				{
+					try
+					{
+						await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+					}
+					catch (OperationCanceledException)
+					{
+						// The deadline fired -- fall through and report the failure, per the
+						// IEventSender contract (treat cancellation like any transient failure).
+					}
+				}
 				return SendResult.RetryableFailure;
 			}
 		}
@@ -108,7 +121,7 @@ namespace DesktopAnalyticsTests
 		// ---- NO-LOSS -------------------------------------------------------------------------
 
 		[Test]
-		public void DrainOnce_RetryRetryThenDeliverAcrossSuccessiveCalls_DeliversExactlyOnceAndEmptiesSpool()
+		public async Task DrainOnce_RetryRetryThenDeliverAcrossSuccessiveCalls_DeliversExactlyOnceAndEmptiesSpool()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -124,13 +137,13 @@ namespace DesktopAnalyticsTests
 				client.Track("user-1", "Save", null);
 				Assert.AreEqual(1, spool.ApproximateCount);
 
-				client.DrainOnce(); // 1st attempt: RetryableFailure -- left in spool.
+				await client.DrainOnceAsync(); // 1st attempt: RetryableFailure -- left in spool.
 				Assert.AreEqual(1, spool.ApproximateCount);
 
-				client.DrainOnce(); // 2nd attempt: RetryableFailure -- still left in spool.
+				await client.DrainOnceAsync(); // 2nd attempt: RetryableFailure -- still left in spool.
 				Assert.AreEqual(1, spool.ApproximateCount);
 
-				client.DrainOnce(); // 3rd attempt: Delivered -- removed.
+				await client.DrainOnceAsync(); // 3rd attempt: Delivered -- removed.
 				Assert.AreEqual(0, spool.ApproximateCount);
 
 				Assert.AreEqual(3, sender.Sent.Count, "the event should have been handed to the sender exactly three times");
@@ -142,7 +155,7 @@ namespace DesktopAnalyticsTests
 		// ---- CRASH-WINDOW / DEDUP -------------------------------------------------------------
 
 		[Test]
-		public void DrainOnce_SenderRecordsThenThrows_SameInsertIdSeenAgainOnLaterRetry()
+		public async Task DrainOnce_SenderRecordsThenThrows_SameInsertIdSeenAgainOnLaterRetry()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -158,7 +171,7 @@ namespace DesktopAnalyticsTests
 				client.InitializeForTest(spool, crashingSender);
 				client.Track("user-1", "Save", null);
 
-				Assert.DoesNotThrow(() => client.DrainOnce());
+				Assert.DoesNotThrowAsync(async () => await client.DrainOnceAsync());
 				Assert.AreEqual(1, spool.ApproximateCount, "the event must not be removed -- the sender never confirmed delivery");
 				Assert.AreEqual(1, crashingSender.Sent.Count);
 
@@ -168,7 +181,7 @@ namespace DesktopAnalyticsTests
 					_ => SendResult.Delivered
 				});
 				client.InitializeForTest(spool, succeedingSender);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				Assert.AreEqual(0, spool.ApproximateCount);
 				Assert.AreEqual(1, succeedingSender.Sent.Count);
@@ -182,7 +195,7 @@ namespace DesktopAnalyticsTests
 		// ---- POISON ---------------------------------------------------------------------------
 
 		[Test]
-		public void DrainOnce_PoisonDrop_RemovesEventAndIncrementsFailedWithoutRetrying()
+		public async Task DrainOnce_PoisonDrop_RemovesEventAndIncrementsFailedWithoutRetrying()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -191,7 +204,7 @@ namespace DesktopAnalyticsTests
 				client.InitializeForTest(spool, sender);
 
 				client.Track("user-1", "BadEvent", null);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				Assert.AreEqual(0, spool.ApproximateCount, "a poison event must be dropped, not left to wedge the spool");
 				Assert.AreEqual(1, sender.CallCount);
@@ -199,7 +212,7 @@ namespace DesktopAnalyticsTests
 				Assert.AreEqual(0, client.Statistics.Succeeded);
 
 				// A further drain must not re-attempt it (it is already gone).
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 				Assert.AreEqual(1, sender.CallCount);
 			}
 		}
@@ -237,7 +250,7 @@ namespace DesktopAnalyticsTests
 		// ---- SCRUBBING --------------------------------------------------------------------------
 
 		[Test]
-		public void Track_ExceptionEventWithUserPathInStackTrace_ScrubsBeforeSpoolingAndSending()
+		public async Task Track_ExceptionEventWithUserPathInStackTrace_ScrubsBeforeSpoolingAndSending()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -277,7 +290,7 @@ namespace DesktopAnalyticsTests
 				});
 				var reopenedClient = new MixpanelClient();
 				reopenedClient.InitializeForTest(spool, scriptedSender);
-				reopenedClient.DrainOnce();
+				await reopenedClient.DrainOnceAsync();
 
 				Assert.AreEqual(1, scriptedSender.Sent.Count);
 				var sentStackTrace = ((JsonPrimitive)scriptedSender.Sent[0].Properties["Stack Trace"]).Content;
@@ -287,7 +300,7 @@ namespace DesktopAnalyticsTests
 		}
 
 		[Test]
-		public void Track_EventNameContainingUserPath_ScrubsEventName()
+		public async Task Track_EventNameContainingUserPath_ScrubsEventName()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -299,7 +312,7 @@ namespace DesktopAnalyticsTests
 				var sender = new ScriptedSender(new Func<AnalyticsEvent, SendResult>[] { _ => SendResult.Delivered });
 				var drainer = new MixpanelClient();
 				drainer.InitializeForTest(spool, sender);
-				drainer.DrainOnce();
+				await drainer.DrainOnceAsync();
 
 				StringAssert.DoesNotContain("alice", sender.Sent[0].EventName);
 				StringAssert.Contains("%USER%", sender.Sent[0].EventName);
@@ -328,7 +341,7 @@ namespace DesktopAnalyticsTests
 			client.InitializeForTest(null, new AlwaysResultSender(SendResult.Delivered));
 
 			Assert.DoesNotThrow(() => client.Track("user-1", "Save", null));
-			Assert.DoesNotThrow(() => client.DrainOnce());
+			Assert.DoesNotThrowAsync(async () => await client.DrainOnceAsync());
 			Assert.DoesNotThrow(() => client.Flush());
 			Assert.DoesNotThrow(() => client.ShutDown());
 		}
@@ -343,7 +356,7 @@ namespace DesktopAnalyticsTests
 
 				client.Track("user-1", "Save", null);
 
-				Assert.DoesNotThrow(() => client.DrainOnce());
+				Assert.DoesNotThrowAsync(async () => await client.DrainOnceAsync());
 				Assert.DoesNotThrow(() => client.Flush());
 
 				// A sender that only ever throws must not be treated as delivered/poison -- the
@@ -489,7 +502,7 @@ namespace DesktopAnalyticsTests
 		// making the test deterministic and instantaneous, per the spec's documented fallback.
 
 		[Test]
-		public void DrainOnce_WithRealRetryPipelineAndZeroDelay_TransientThenSuccess_DeliversWithinOneDrainOnceCall()
+		public async Task DrainOnce_WithRealRetryPipelineAndZeroDelay_TransientThenSuccess_DeliversWithinOneDrainOnceCall()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -505,7 +518,7 @@ namespace DesktopAnalyticsTests
 				client.InitializeForTest(spool, sender, pipeline: pipeline);
 
 				client.Track("user-1", "Save", null);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				Assert.AreEqual(0, spool.ApproximateCount,
 					"Polly should have retried in-process and delivered within this single DrainOnce call");
@@ -516,7 +529,7 @@ namespace DesktopAnalyticsTests
 		}
 
 		[Test]
-		public void DrainOnce_WithRealCircuitBreakerAndZeroDelay_SustainedFailures_TripsBreakerAndStopsCallingSender()
+		public async Task DrainOnce_WithRealCircuitBreakerAndZeroDelay_SustainedFailures_TripsBreakerAndStopsCallingSender()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -536,13 +549,13 @@ namespace DesktopAnalyticsTests
 				for (var i = 0; i < 8; i++)
 				{
 					client.Track("user-1", "Save-" + i, null);
-					client.DrainOnce();
+					await client.DrainOnceAsync();
 				}
 
 				var callsAfterWarmup = sender.CallCount;
 
 				client.Track("user-1", "OneMore", null);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				// Once the breaker is open, MixpanelClient must treat BrokenCircuitException as a
 				// RetryableFailure (leaving the event spooled) WITHOUT invoking the sender again.
@@ -553,7 +566,7 @@ namespace DesktopAnalyticsTests
 		}
 
 		[Test]
-		public void DrainOnce_WithRealCircuitBreakerAndFixedMinimumThroughput_OpensAfterOneFullyFailingTick()
+		public async Task DrainOnce_WithRealCircuitBreakerAndFixedMinimumThroughput_OpensAfterOneFullyFailingTick()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -570,14 +583,14 @@ namespace DesktopAnalyticsTests
 				client.InitializeForTest(spool, sender, pipeline: pipeline, batchSize: 1);
 
 				client.Track("user-1", "Save", null);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				var callsAfterFirstTick = sender.CallCount;
 				Assert.GreaterOrEqual(callsAfterFirstTick, 3,
 					"one fully-failing tick should make at least 3 attempts (1 try + 2 retries)");
 
 				client.Track("user-1", "OneMore", null);
-				client.DrainOnce();
+				await client.DrainOnceAsync();
 
 				Assert.AreEqual(callsAfterFirstTick, sender.CallCount,
 					"the breaker should already be open after just one failing tick, so the sender must not be called again");

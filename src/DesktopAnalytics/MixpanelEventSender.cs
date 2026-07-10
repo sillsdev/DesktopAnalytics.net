@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Segment.Serialization;
 
 namespace DesktopAnalytics
@@ -64,14 +65,15 @@ namespace DesktopAnalytics
 
 		/// <summary>
 		/// Posts <paramref name="evt"/> to Mixpanel's /track endpoint and classifies the result. Never
-		/// throws: any serialization, network, or cancellation failure is caught and reported as a
-		/// <see cref="SendResult"/> (see class remarks for the classification rules).
+		/// throws (and never returns a faulted task): any serialization, network, or cancellation
+		/// failure is caught and reported as a <see cref="SendResult"/> (see class remarks for the
+		/// classification rules).
 		/// </summary>
-		/// <param name="cancellationToken">See <see cref="IEventSender.Send"/>. A bounded caller
+		/// <param name="cancellationToken">See <see cref="IEventSender.SendAsync"/>. A bounded caller
 		/// (<see cref="MixpanelClient"/>'s BoundedDrain) uses this to abandon a request against a
 		/// server that accepts the connection but never responds; that is reported as
 		/// <see cref="SendResult.RetryableFailure"/>, exactly like any other transient failure.</param>
-		public SendResult Send(AnalyticsEvent evt, CancellationToken cancellationToken = default)
+		public async Task<SendResult> SendAsync(AnalyticsEvent evt, CancellationToken cancellationToken = default)
 		{
 			try
 			{
@@ -99,11 +101,9 @@ namespace DesktopAnalytics
 					using (var content = new StringContent(formBody, Encoding.UTF8,
 						       "application/x-www-form-urlencoded"))
 					{
-						response = _httpClient
+						response = await _httpClient
 							.PostAsync(_baseUrl + "/track", content, cancellationToken)
-							.ConfigureAwait(false)
-							.GetAwaiter()
-							.GetResult();
+							.ConfigureAwait(false);
 					}
 				}
 				catch (OperationCanceledException e)
@@ -135,10 +135,8 @@ namespace DesktopAnalytics
 						// Delivered so it cannot silently vanish while never actually landing.
 						try
 						{
-							var body = response.Content.ReadAsStringAsync()
-								.ConfigureAwait(false)
-								.GetAwaiter()
-								.GetResult();
+							var body = await response.Content.ReadAsStringAsync()
+								.ConfigureAwait(false);
 							if (body != null && body.Trim() == "0")
 								return SendResult.PoisonDrop;
 						}

@@ -68,8 +68,8 @@ namespace DesktopAnalytics
 
 		// Guards only against overlapping TIMER ticks: if a previous tick's drain is still running
 		// when the next tick fires, the new tick is skipped. It does NOT serialize ticks against
-		// Flush/ShutDown/DrainOnce -- those may run concurrently with a tick, which is safe because
-		// all spool access is serialized inside EventSpool (its _syncRoot lock); this flag just
+		// Flush/ShutDown/DrainOnceAsync -- those may run concurrently with a tick, which is safe
+		// because all spool access is serialized inside EventSpool (its semaphore); this flag just
 		// keeps a slow drain from stacking up redundant timer callbacks behind it.
 		private int _timerDraining;
 
@@ -125,12 +125,12 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// Test-only initializer: injects every non-deterministic dependency directly (the spool, the
 		/// sender, the clock, and the resilience pipeline) and deliberately does NOT start the
-		/// background timer -- tests pump <see cref="DrainOnce"/> manually instead of racing a real
+		/// background timer -- tests pump <see cref="DrainOnceAsync"/> manually instead of racing a real
 		/// timer thread. See offline-analytics.md, "Design-for-test seams".
 		/// </summary>
 		/// <param name="pipeline">If null, defaults to <see cref="ResiliencePipeline{TResult}.Empty"/>
-		/// (no retry, no circuit breaker) so that, by default, one <see cref="DrainOnce"/> call maps
-		/// to exactly one <see cref="IEventSender.Send"/> call per spooled event -- the simplest,
+		/// (no retry, no circuit breaker) so that, by default, one <see cref="DrainOnceAsync"/> call maps
+		/// to exactly one <see cref="IEventSender.SendAsync"/> call per spooled event -- the simplest,
 		/// most deterministic shape for most tests. Tests that specifically want to exercise Polly
 		/// retry/circuit-breaker behavior pass their own pipeline (see
 		/// <see cref="BuildDefaultPipeline"/>).</param>
@@ -179,7 +179,7 @@ namespace DesktopAnalytics
 			{
 				ShouldHandle = args => new ValueTask<bool>(ShouldHandleOutcome(args.Outcome)),
 				FailureRatio = 0.5,
-				// Matches attempts-per-tick: a fully failing DrainOnce tick produces exactly 3
+				// Matches attempts-per-tick: a fully failing drain tick produces exactly 3
 				// outcomes through this pipeline (1 initial attempt + MaxRetryAttempts=2 retries),
 				// all within the same instant, so all 3 always land in one SamplingDuration window.
 				// With this at 4 (the previous value), a single tick could never reach the minimum
@@ -210,7 +210,9 @@ namespace DesktopAnalytics
 				var initialDelay = TimeSpan.FromTicks(
 					Math.Min(TimeSpan.FromSeconds(kInitialFlushDelaySeconds).Ticks, _flushInterval.Ticks));
 				_paused = false;
-				_flushTimer = new Timer(_ => OnTimerTick(), null, initialDelay, _flushInterval);
+				// Fire-and-forget by design: OnTimerTickAsync catches everything internally, so the
+				// discarded task can never fault unobserved.
+				_flushTimer = new Timer(_ => _ = OnTimerTickAsync(), null, initialDelay, _flushInterval);
 			}
 			catch (Exception e)
 			{
@@ -265,15 +267,16 @@ namespace DesktopAnalytics
 			}
 		}
 
-		// Runs on a ThreadPool thread (System.Threading.Timer), never the UI thread.
-		private void OnTimerTick()
+		// Starts on a ThreadPool thread (System.Threading.Timer) and continues on the pool after
+		// awaits (ConfigureAwait(false) throughout the drain path) -- never the UI thread.
+		private async Task OnTimerTickAsync()
 		{
 			if (Interlocked.CompareExchange(ref _timerDraining, 1, 0) != 0)
-				return; // A previous tick (or a concurrent Flush/ShutDown) is still draining; skip.
+				return; // A previous tick is still draining; skip.
 
 			try
 			{
-				DrainOnce();
+				await DrainOnceAsync().ConfigureAwait(false);
 			}
 			catch (Exception e)
 			{
@@ -287,24 +290,29 @@ namespace DesktopAnalytics
 
 		/// <summary>
 		/// One-shot attempt to deliver up to one batch of spooled events. This is exactly what the
-		/// background timer calls on each tick; tests call it directly to pump the flush loop
+		/// background timer awaits on each tick; tests await it directly to pump the flush loop
 		/// deterministically instead of racing a real timer (see offline-analytics.md, "Flush-loop
 		/// scheduling" in the design-for-test-seams table). Always goes through the full Polly
-		/// pipeline (retry + circuit breaker) with no cancellation -- <see cref="BoundedDrain"/> is
-		/// the bounded/cancellable variant used by Flush/ShutDown.
+		/// pipeline (retry + circuit breaker) with no cancellation -- <see cref="BoundedDrainAsync"/>
+		/// is the bounded/cancellable variant used by Flush/ShutDown.
 		/// </summary>
-		internal void DrainOnce()
+		internal Task DrainOnceAsync()
 		{
-			DrainOnceCore(CancellationToken.None, usePipeline: true);
+			return DrainOnceCoreAsync(CancellationToken.None, usePipeline: true);
 		}
 
-		// Shared implementation behind DrainOnce() and BoundedDrain(). usePipeline is false only for
-		// BoundedDrain's bounded attempts (see its comment for why retries are skipped there).
-		private void DrainOnceCore(CancellationToken cancellationToken, bool usePipeline)
+		// Shared implementation behind DrainOnceAsync() and BoundedDrainAsync(). usePipeline is false
+		// only for BoundedDrainAsync's bounded attempts (see its comment for why retries are skipped
+		// there).
+		private async Task DrainOnceCoreAsync(CancellationToken cancellationToken, bool usePipeline)
 		{
 			try
 			{
-				_spool?.ProcessBatch(_batchSize, evt => SendOneEvent(evt, cancellationToken, usePipeline));
+				if (_spool == null)
+					return;
+				await _spool.ProcessBatchAsync(_batchSize,
+						evt => SendOneEventAsync(evt, cancellationToken, usePipeline))
+					.ConfigureAwait(false);
 			}
 			catch (Exception e)
 			{
@@ -312,10 +320,11 @@ namespace DesktopAnalytics
 			}
 		}
 
-		// The callback EventSpool.ProcessBatch invokes per dequeued event. Must never throw (see
-		// EventSpool.ProcessBatch's contract: a thrown exception is treated as a RetryableFailure
-		// anyway, but returning it directly avoids relying on that fallback).
-		private SendResult SendOneEvent(AnalyticsEvent evt, CancellationToken cancellationToken, bool usePipeline)
+		// The callback EventSpool.ProcessBatchAsync awaits per dequeued event. Must never throw or
+		// fault (see EventSpool.ProcessBatchAsync's contract: a thrown exception is treated as a
+		// RetryableFailure anyway, but returning it directly avoids relying on that fallback).
+		private async Task<SendResult> SendOneEventAsync(AnalyticsEvent evt, CancellationToken cancellationToken,
+			bool usePipeline)
 		{
 			try
 			{
@@ -323,8 +332,11 @@ namespace DesktopAnalytics
 				try
 				{
 					result = usePipeline
-						? _pipeline.Execute(ct => _sender.Send(evt, ct), cancellationToken)
-						: _sender.Send(evt, cancellationToken);
+						? await _pipeline.ExecuteAsync(
+								async ct => await _sender.SendAsync(evt, ct).ConfigureAwait(false),
+								cancellationToken)
+							.ConfigureAwait(false)
+						: await _sender.SendAsync(evt, cancellationToken).ConfigureAwait(false);
 				}
 				catch (BrokenCircuitException e)
 				{
@@ -459,11 +471,11 @@ namespace DesktopAnalytics
 		/// <remarks>
 		/// Two things make this provably bounded even against a "black hole" server (one that
 		/// accepts the TCP connection but never responds -- captive portals and some firewalls do
-		/// this), which the plain <see cref="DrainOnce"/> path is not:
+		/// this), which the plain <see cref="DrainOnceAsync"/> path is not:
 		/// <list type="bullet">
 		/// <item>A single <see cref="CancellationTokenSource"/> covering the whole wall-clock
 		/// budget is shared by every attempt, passed all the way down to
-		/// <see cref="System.Net.Http.HttpClient"/> via <see cref="IEventSender.Send"/>. Without
+		/// <see cref="System.Net.Http.HttpClient"/> via <see cref="IEventSender.SendAsync"/>. Without
 		/// this, the deadline below is only checked BETWEEN attempts -- one hanging attempt could
 		/// run as long as the sender's own retry-multiplied HTTP timeout (e.g. 3 attempts x a 15s
 		/// HttpClient timeout ~= 45s) before the bound is ever checked. Created via the injected
@@ -475,7 +487,7 @@ namespace DesktopAnalytics
 		/// server.</item>
 		/// </list>
 		/// </remarks>
-		private void BoundedDrain()
+		private async Task BoundedDrainAsync()
 		{
 			if (_spool == null)
 				return;
@@ -492,7 +504,7 @@ namespace DesktopAnalytics
 						if (_spool.ApproximateCount <= 0)
 							return;
 
-						DrainOnceCore(cts.Token, usePipeline: false);
+						await DrainOnceCoreAsync(cts.Token, usePipeline: false).ConfigureAwait(false);
 					}
 				}
 			}
@@ -502,12 +514,18 @@ namespace DesktopAnalytics
 			}
 		}
 
-		/// <summary>Bounded drain; returns fast even while offline. See <see cref="BoundedDrain"/>.</summary>
+		/// <summary>Bounded drain; returns fast even while offline. See <see cref="BoundedDrainAsync"/>.</summary>
+		/// <remarks>
+		/// IClient's Flush/ShutDown are synchronous, so this blocks on the bounded drain -- safe
+		/// even from a UI thread because the entire drain path awaits with ConfigureAwait(false)
+		/// (no continuation ever needs the caller's SynchronizationContext), and the drain itself
+		/// is bounded to a few seconds.
+		/// </remarks>
 		public void Flush()
 		{
 			try
 			{
-				BoundedDrain();
+				BoundedDrainAsync().GetAwaiter().GetResult();
 			}
 			catch (Exception e)
 			{
@@ -524,7 +542,7 @@ namespace DesktopAnalytics
 			try
 			{
 				StopTimerPermanently();
-				BoundedDrain();
+				BoundedDrainAsync().GetAwaiter().GetResult();
 			}
 			catch (Exception e)
 			{

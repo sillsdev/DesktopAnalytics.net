@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using DesktopAnalytics;
 using NUnit.Framework;
 
@@ -80,7 +81,7 @@ namespace DesktopAnalyticsTests
 		// 1. RESTART DURABILITY: enqueue N, dispose, reopen a NEW spool on the same directory --
 		// all N survive, and a subsequent ProcessBatch (all Delivered) empties it.
 		[Test]
-		public void Enqueue_ThenDisposeAndReopen_EventsSurviveAndDrainFully()
+		public async Task Enqueue_ThenDisposeAndReopen_EventsSurviveAndDrainFully()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -93,10 +94,10 @@ namespace DesktopAnalyticsTests
 				Assert.AreEqual(5, reopened.ApproximateCount);
 
 				var delivered = new List<string>();
-				reopened.ProcessBatch(10, evt =>
+				await reopened.ProcessBatchAsync(10, evt =>
 				{
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				Assert.AreEqual(5, delivered.Count);
@@ -106,14 +107,14 @@ namespace DesktopAnalyticsTests
 
 		// 2. ProcessBatch where send returns Delivered for all => queue empty afterward.
 		[Test]
-		public void ProcessBatch_AllDelivered_EmptiesSpool()
+		public async Task ProcessBatch_AllDelivered_EmptiesSpool()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
 				spool.Enqueue(MakeEvent("A"));
 				spool.Enqueue(MakeEvent("B"));
 
-				spool.ProcessBatch(10, evt => SendResult.Delivered);
+				await spool.ProcessBatchAsync(10, evt => Task.FromResult(SendResult.Delivered));
 
 				Assert.AreEqual(0, spool.ApproximateCount);
 			}
@@ -122,7 +123,7 @@ namespace DesktopAnalyticsTests
 		// 3. send returns RetryableFailure on the 2nd item => 1st removed, 2nd and rest remain;
 		// a later ProcessBatch delivers them.
 		[Test]
-		public void ProcessBatch_RetryableFailureOnSecondItem_LeavesSecondAndRestInSpool()
+		public async Task ProcessBatch_RetryableFailureOnSecondItem_LeavesSecondAndRestInSpool()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -131,10 +132,10 @@ namespace DesktopAnalyticsTests
 				spool.Enqueue(MakeEvent("C"));
 
 				var firstPassCalls = new List<string>();
-				spool.ProcessBatch(10, evt =>
+				await spool.ProcessBatchAsync(10, evt =>
 				{
 					firstPassCalls.Add(evt.EventName);
-					return evt.EventName == "B" ? SendResult.RetryableFailure : SendResult.Delivered;
+					return Task.FromResult(evt.EventName == "B" ? SendResult.RetryableFailure : SendResult.Delivered);
 				});
 
 				// A was delivered and flushed; B failed (not flushed, so processing stopped before C.
@@ -142,10 +143,10 @@ namespace DesktopAnalyticsTests
 				Assert.AreEqual(2, spool.ApproximateCount);
 
 				var secondPassCalls = new List<string>();
-				spool.ProcessBatch(10, evt =>
+				await spool.ProcessBatchAsync(10, evt =>
 				{
 					secondPassCalls.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "B", "C" }, secondPassCalls);
@@ -156,7 +157,7 @@ namespace DesktopAnalyticsTests
 		// 4. CRASH-WINDOW: send records the event then THROWS => nothing removed; reopening the
 		// spool shows the same events still present (at-least-once, no data loss).
 		[Test]
-		public void ProcessBatch_SendThrows_NothingRemovedAndEventsSurviveReopen()
+		public async Task ProcessBatch_SendThrows_NothingRemovedAndEventsSurviveReopen()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -164,7 +165,7 @@ namespace DesktopAnalyticsTests
 				spool.Enqueue(MakeEvent("Crash-2"));
 
 				var recorded = new List<string>();
-				Assert.DoesNotThrow(() => spool.ProcessBatch(10, evt =>
+				Assert.DoesNotThrowAsync(async () => await spool.ProcessBatchAsync(10, evt =>
 				{
 					// Simulate a sender that actually delivered the event over the network, then
 					// crashed/threw before this method could observe success and flush.
@@ -181,10 +182,10 @@ namespace DesktopAnalyticsTests
 				Assert.AreEqual(2, reopened.ApproximateCount);
 
 				var delivered = new List<string>();
-				reopened.ProcessBatch(10, evt =>
+				await reopened.ProcessBatchAsync(10, evt =>
 				{
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "Crash-1", "Crash-2" }, delivered);
@@ -193,7 +194,7 @@ namespace DesktopAnalyticsTests
 
 		// 5. Poison: send returns PoisonDrop => item removed even though not delivered.
 		[Test]
-		public void ProcessBatch_PoisonDrop_RemovesItemEvenThoughNotDelivered()
+		public async Task ProcessBatch_PoisonDrop_RemovesItemEvenThoughNotDelivered()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -201,12 +202,12 @@ namespace DesktopAnalyticsTests
 				spool.Enqueue(MakeEvent("Good"));
 
 				var delivered = new List<string>();
-				spool.ProcessBatch(10, evt =>
+				await spool.ProcessBatchAsync(10, evt =>
 				{
 					if (evt.EventName == "Poison")
-						return SendResult.PoisonDrop;
+						return Task.FromResult(SendResult.PoisonDrop);
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "Good" }, delivered);
@@ -216,7 +217,7 @@ namespace DesktopAnalyticsTests
 
 		// 6. Bounding: maxItems=3, enqueue 5 => count==3, the 3 NEWEST remain.
 		[Test]
-		public void Enqueue_ExceedingMaxItems_DropsOldestKeepsNewest()
+		public async Task Enqueue_ExceedingMaxItems_DropsOldestKeepsNewest()
 		{
 			using (var spool = new EventSpool(_spoolDir, 3))
 			{
@@ -226,10 +227,10 @@ namespace DesktopAnalyticsTests
 				Assert.AreEqual(3, spool.ApproximateCount);
 
 				var remaining = new List<string>();
-				spool.ProcessBatch(10, evt =>
+				await spool.ProcessBatchAsync(10, evt =>
 				{
 					remaining.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "Event-2", "Event-3", "Event-4" }, remaining);
@@ -238,7 +239,7 @@ namespace DesktopAnalyticsTests
 
 		// 7. Purge empties a non-empty spool.
 		[Test]
-		public void Purge_EmptiesNonEmptySpool()
+		public async Task Purge_EmptiesNonEmptySpool()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -253,10 +254,10 @@ namespace DesktopAnalyticsTests
 
 				// A drain after Purge should find nothing to send.
 				var delivered = new List<string>();
-				spool.ProcessBatch(10, evt =>
+				await spool.ProcessBatchAsync(10, evt =>
 				{
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 				Assert.AreEqual(0, delivered.Count);
 			}
@@ -267,7 +268,7 @@ namespace DesktopAnalyticsTests
 		// from the on-disk files once the spool is closed (the privacy property of a consent
 		// purge -- DiskQueue trims consumed entries rather than retaining them).
 		[Test]
-		public void Purge_ThenEnqueue_SpoolRemainsUsableAndPurgedBytesAreGoneFromDisk()
+		public async Task Purge_ThenEnqueue_SpoolRemainsUsableAndPurgedBytesAreGoneFromDisk()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -290,10 +291,10 @@ namespace DesktopAnalyticsTests
 			using (var reopened = new EventSpool(_spoolDir, 10))
 			{
 				var delivered = new List<string>();
-				reopened.ProcessBatch(10, evt =>
+				await reopened.ProcessBatchAsync(10, evt =>
 				{
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 				CollectionAssert.AreEqual(new[] { "PostPurge" }, delivered);
 			}
@@ -303,7 +304,7 @@ namespace DesktopAnalyticsTests
 		// all 100 persisted. Dedicated Threads (not Task.Run) so the intended parallelism is
 		// explicit rather than at the mercy of thread-pool scheduling.
 		[Test]
-		public void Enqueue_FromMultipleThreadsConcurrently_AllEventsPersisted()
+		public async Task Enqueue_FromMultipleThreadsConcurrently_AllEventsPersisted()
 		{
 			const int threadCount = 4;
 			const int perThread = 25;
@@ -330,10 +331,10 @@ namespace DesktopAnalyticsTests
 
 				// Confirm every single one is actually retrievable, not just counted.
 				var seen = new HashSet<string>();
-				spool.ProcessBatch(threadCount * perThread, evt =>
+				await spool.ProcessBatchAsync(threadCount * perThread, evt =>
 				{
 					seen.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 				Assert.AreEqual(threadCount * perThread, seen.Count);
 			}
@@ -342,7 +343,7 @@ namespace DesktopAnalyticsTests
 		// 8b. ProcessBatch honors maxItems: with more events spooled than the batch size, exactly
 		// maxItems are attempted per call and the rest stay put for the next call.
 		[Test]
-		public void ProcessBatch_MoreEventsThanMaxItems_AttemptsExactlyMaxItemsPerCall()
+		public async Task ProcessBatch_MoreEventsThanMaxItems_AttemptsExactlyMaxItemsPerCall()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -350,20 +351,20 @@ namespace DesktopAnalyticsTests
 					spool.Enqueue(MakeEvent("Event-" + i));
 
 				var firstBatch = new List<string>();
-				spool.ProcessBatch(2, evt =>
+				await spool.ProcessBatchAsync(2, evt =>
 				{
 					firstBatch.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "Event-0", "Event-1" }, firstBatch);
 				Assert.AreEqual(3, spool.ApproximateCount);
 
 				var secondBatch = new List<string>();
-				spool.ProcessBatch(2, evt =>
+				await spool.ProcessBatchAsync(2, evt =>
 				{
 					secondBatch.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 
 				CollectionAssert.AreEqual(new[] { "Event-2", "Event-3" }, secondBatch);
@@ -398,7 +399,7 @@ namespace DesktopAnalyticsTests
 		// than hand-crafting file contents -- keeps this test independent of DiskQueue's private
 		// on-disk format (see the NOTE at the top of this fixture).
 		[Test]
-		public void Constructor_GarbageAppendedToDataFile_SpoolReopensAndCommittedEventsSurvive()
+		public async Task Constructor_GarbageAppendedToDataFile_SpoolReopensAndCommittedEventsSurvive()
 		{
 			using (var spool = new EventSpool(_spoolDir, 10))
 			{
@@ -411,10 +412,10 @@ namespace DesktopAnalyticsTests
 			using (var reopened = new EventSpool(_spoolDir, 10))
 			{
 				var delivered = new List<string>();
-				reopened.ProcessBatch(10, evt =>
+				await reopened.ProcessBatchAsync(10, evt =>
 				{
 					delivered.Add(evt.EventName);
-					return SendResult.Delivered;
+					return Task.FromResult(SendResult.Delivered);
 				});
 				CollectionAssert.AreEqual(new[] { "Committed-1", "Committed-2" }, delivered);
 
