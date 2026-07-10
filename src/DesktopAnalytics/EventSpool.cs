@@ -55,6 +55,10 @@ namespace DesktopAnalytics
 
 		private readonly int _maxItems;
 		private readonly int _maxItemBytes;
+		private readonly long _maxSpoolBytes;
+		// Logical bytes of the LIVE entries (disk file sizes would overcount consumed-but-untrimmed
+		// ones). Guarded by _sync; measured at open, then maintained incrementally.
+		private long _spoolBytes;
 		private readonly string _spoolDirectory;
 		// Not readonly: Purge replaces the queue wholesale (see its remarks). Always accessed
 		// under _sync. Null only if a Purge-time reopen failed; every public method already
@@ -81,21 +85,57 @@ namespace DesktopAnalytics
 		/// larger is refused at enqueue time (<see cref="Enqueue"/> returns false) rather than
 		/// spooled. Defaults to unbounded; <see cref="MixpanelClient"/> passes the transport's
 		/// real per-event limit.</param>
+		/// <param name="maxSpoolBytes">The maximum total serialized size of all retained events;
+		/// enqueuing beyond this drops the oldest event(s) first, exactly like
+		/// <paramref name="maxItems"/>. Bounds both the disk footprint and the total upload
+		/// liability of an accumulated backlog. Defaults to unbounded.</param>
 		/// <exception cref="Exception">Propagates whatever DiskQueue throws if the lock cannot be
 		/// acquired within the internal wait timeout (e.g. another process/instance already has
 		/// this spool open) or if the directory cannot be created/opened. This is deliberately not
 		/// swallowed: it is a startup-time failure the caller needs to know about.</exception>
-		public EventSpool(string spoolDirectory, int maxItems, int maxItemBytes = int.MaxValue)
+		public EventSpool(string spoolDirectory, int maxItems, int maxItemBytes = int.MaxValue,
+			long maxSpoolBytes = long.MaxValue)
 		{
 			if (maxItems < 0)
 				throw new ArgumentOutOfRangeException(nameof(maxItems));
 			if (maxItemBytes <= 0)
 				throw new ArgumentOutOfRangeException(nameof(maxItemBytes));
+			if (maxSpoolBytes <= 0)
+				throw new ArgumentOutOfRangeException(nameof(maxSpoolBytes));
 
 			_maxItems = maxItems;
 			_maxItemBytes = maxItemBytes;
+			_maxSpoolBytes = maxSpoolBytes;
 			_spoolDirectory = spoolDirectory;
 			_queue = PersistentQueue.WaitFor(spoolDirectory, s_lockWaitTimeout);
+			_spoolBytes = MeasureExistingSpoolBytes();
+		}
+
+		// Sums the live entries left by a previous session (dequeue-all in a session disposed
+		// without Flush = pure measurement; DiskQueue rolls it back). Failure => 0: the byte cap
+		// is then under-enforced until the backlog drains, erring toward keeping events.
+		private long MeasureExistingSpoolBytes()
+		{
+			try
+			{
+				long total = 0;
+				using (var session = _queue.OpenSession())
+				{
+					while (true)
+					{
+						var bytes = session.Dequeue();
+						if (bytes == null)
+							break;
+						total += bytes.Length;
+					}
+				}
+				return total;
+			}
+			catch (Exception e)
+			{
+				Debug.WriteLine("EventSpool: failed to measure existing spool bytes, assuming 0: " + e);
+				return 0;
+			}
 		}
 
 		/// <summary>
@@ -200,6 +240,7 @@ namespace DesktopAnalytics
 						session.Flush();
 					}
 
+					_spoolBytes += bytes.Length;
 					EnforceCapLocked();
 				}
 				finally
@@ -216,10 +257,10 @@ namespace DesktopAnalytics
 			}
 		}
 
-		// Caller must hold _sync. Drops the oldest item(s) one at a time until the queue is at
-		// or under _maxItems. Each iteration removes exactly one item (or gives up on a read/dequeue
-		// failure), so this always terminates -- including the degenerate case of _maxItems == 0,
-		// where even the item just enqueued is dropped.
+		// Caller must hold _sync. Drops the oldest item(s) one at a time until the queue is at or
+		// under BOTH caps (_maxItems and _maxSpoolBytes). Each iteration removes exactly one item
+		// (or gives up on a read/dequeue failure), so this always terminates -- including the
+		// degenerate case of _maxItems == 0, where even the item just enqueued is dropped.
 		private void EnforceCapLocked()
 		{
 			while (true)
@@ -235,8 +276,16 @@ namespace DesktopAnalytics
 					return;
 				}
 
-				if (count <= _maxItems)
+				if (count <= _maxItems && _spoolBytes <= _maxSpoolBytes)
 					return;
+
+				if (count <= 0)
+				{
+					// Nothing left to drop; if the byte estimate says otherwise it has drifted --
+					// resync it to the truth (an empty queue holds zero bytes).
+					_spoolBytes = 0;
+					return;
+				}
 
 				try
 				{
@@ -244,14 +293,36 @@ namespace DesktopAnalytics
 					{
 						var oldest = session.Dequeue();
 						if (oldest == null)
-							return; // Queue is unexpectedly empty; nothing left to drop.
+						{
+							_spoolBytes = 0; // See the count <= 0 case above.
+							return;
+						}
 						session.Flush();
+						_spoolBytes = Math.Max(0, _spoolBytes - oldest.Length);
 					}
 				}
 				catch (Exception e)
 				{
 					Debug.WriteLine("EventSpool.EnforceCap: failed to drop oldest item, giving up: " + e);
 					return;
+				}
+			}
+		}
+
+		// Test seam: the spool's current logical byte total (the value the byte cap is enforced
+		// against), primarily so tests can prove it survives a dispose/reopen.
+		internal long ApproximateBytes
+		{
+			get
+			{
+				_sync.Wait();
+				try
+				{
+					return _spoolBytes;
+				}
+				finally
+				{
+					_sync.Release();
 				}
 			}
 		}
@@ -274,9 +345,15 @@ namespace DesktopAnalytics
 		/// at-least-once delivery -- a sender that delivered the event but crashed/threw before
 		/// this method could flush will see the same event again on the next call.
 		/// </summary>
-		public async Task ProcessBatchAsync(int maxItems, Func<AnalyticsEvent, Task<SendResult>> send)
+		/// <param name="maxItems">Maximum number of events attempted in this call.</param>
+		/// <param name="send">Decides each event's fate; see the summary above.</param>
+		/// <param name="maxBytes">Soft byte budget for this call, bounding each drain burst on a
+		/// slow/metered connection. Checked AFTER each event, so a single event over the whole
+		/// budget still goes -- the budget can never starve the queue.</param>
+		public async Task ProcessBatchAsync(int maxItems, Func<AnalyticsEvent, Task<SendResult>> send,
+			long maxBytes = long.MaxValue)
 		{
-			if (send == null || maxItems <= 0)
+			if (send == null || maxItems <= 0 || maxBytes <= 0)
 				return;
 
 			try
@@ -284,6 +361,7 @@ namespace DesktopAnalytics
 				await _sync.WaitAsync().ConfigureAwait(false);
 				try
 				{
+					long sentBytes = 0;
 					using (var session = _queue.OpenSession())
 					{
 						for (var i = 0; i < maxItems; i++)
@@ -314,6 +392,7 @@ namespace DesktopAnalytics
 								Debug.WriteLine(
 									"EventSpool.ProcessBatch: failed to deserialize event, dropping: " + e);
 								session.Flush();
+								_spoolBytes = Math.Max(0, _spoolBytes - bytes.Length);
 								continue;
 							}
 
@@ -332,6 +411,10 @@ namespace DesktopAnalytics
 							if (result == SendResult.Delivered || result == SendResult.PoisonDrop)
 							{
 								session.Flush();
+								_spoolBytes = Math.Max(0, _spoolBytes - bytes.Length);
+								sentBytes += bytes.Length;
+								if (sentBytes >= maxBytes)
+									return; // Byte budget for this call is spent.
 								continue;
 							}
 
@@ -391,6 +474,7 @@ namespace DesktopAnalytics
 						Directory.Delete(_spoolDirectory, true);
 
 					_queue = PersistentQueue.WaitFor(_spoolDirectory, s_lockWaitTimeout);
+					_spoolBytes = 0;
 				}
 				finally
 				{

@@ -40,6 +40,12 @@ namespace DesktopAnalytics
 		// indistinguishable from being offline) and wedge the head of the queue forever.
 		private const int kMaxSpooledEventBytes = 1024 * 1024;
 
+		// Bandwidth courtesy on slow/metered connections: a soft byte budget per flush tick, and a
+		// total-backlog cap (drop-oldest) bounding disk footprint and upload liability. See the
+		// "Constrained bandwidth" section of the PR #43 description for the pacing rationale.
+		private const long kMaxBytesPerDrainTick = 256 * 1024;
+		private const long kDefaultMaxSpoolBytes = 20L * 1024 * 1024;
+
 		// On (re)start, attempt the first drain soon rather than waiting a full interval, so events
 		// spooled during a PREVIOUS (offline) session go out shortly after launch instead of ~30s later.
 		private const int kInitialFlushDelaySeconds = 3;
@@ -108,7 +114,7 @@ namespace DesktopAnalytics
 
 				_timeProvider = TimeProvider.System;
 				_spool = new EventSpool(EventSpool.GetDefaultSpoolPath(apiSecret), kDefaultMaxSpoolItems,
-					kMaxSpooledEventBytes);
+					kMaxSpooledEventBytes, kDefaultMaxSpoolBytes);
 				_sender = new MixpanelEventSender(apiSecret);
 				_pipeline = BuildDefaultPipeline(_timeProvider);
 
@@ -320,7 +326,8 @@ namespace DesktopAnalytics
 				if (_spool == null)
 					return;
 				await _spool.ProcessBatchAsync(_batchSize,
-						evt => SendOneEventAsync(evt, cancellationToken, usePipeline))
+						evt => SendOneEventAsync(evt, cancellationToken, usePipeline),
+						kMaxBytesPerDrainTick)
 					.ConfigureAwait(false);
 			}
 			catch (Exception e)

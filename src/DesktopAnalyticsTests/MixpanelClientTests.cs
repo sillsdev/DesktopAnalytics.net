@@ -587,6 +587,32 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// A drain tick is byte-budgeted (bandwidth courtesy on slow/metered connections): three
+		// ~200KB events against the 256KB/tick budget take two ticks, not one.
+		[Test]
+		public async Task DrainOnce_EventsExceedingPerTickByteBudget_SpreadsAcrossTicks()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new AlwaysResultSender(SendResult.Delivered);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				for (var i = 0; i < 3; i++)
+					client.Track("user-1", "Big-" + i,
+						new JsonObject { { "Payload", new string('x', 200 * 1024) } });
+
+				await client.DrainOnceAsync();
+				Assert.AreEqual(2, sender.CallCount,
+					"the 256KB/tick budget is crossed after the second ~200KB event");
+				Assert.AreEqual(1, spool.ApproximateCount);
+
+				await client.DrainOnceAsync();
+				Assert.AreEqual(3, sender.CallCount);
+				Assert.AreEqual(0, spool.ApproximateCount);
+			}
+		}
+
 		// ---- STATISTICS -------------------------------------------------------------------------
 
 		[Test]

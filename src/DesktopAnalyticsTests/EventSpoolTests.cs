@@ -362,6 +362,93 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// 8a2. Byte-based spool cap: enqueuing past maxSpoolBytes drops the oldest event(s),
+		// exactly like the item cap.
+		[Test]
+		public async Task Enqueue_ExceedingMaxSpoolBytes_DropsOldestKeepsNewest()
+		{
+			var events = new[] { MakeEvent("Event-A"), MakeEvent("Event-B"), MakeEvent("Event-C"), MakeEvent("Event-D") };
+			// Cap sized (from the real serialized lengths) to hold the first three but not all four.
+			long cap = events[0].ToBytes().Length + events[1].ToBytes().Length + events[2].ToBytes().Length;
+
+			using (var spool = new EventSpool(_spoolDir, 100, maxSpoolBytes: cap))
+			{
+				foreach (var evt in events)
+					spool.Enqueue(evt);
+
+				var remaining = new List<string>();
+				await spool.ProcessBatchAsync(10, evt =>
+				{
+					remaining.Add(evt.EventName);
+					return Task.FromResult(SendResult.Delivered);
+				});
+
+				CollectionAssert.AreEqual(new[] { "Event-B", "Event-C", "Event-D" }, remaining,
+					"the byte cap must drop the OLDEST event to make room");
+			}
+		}
+
+		// 8a3. The byte accounting behind the cap survives a restart (measured from the live
+		// entries on open), so a reopened spool enforces the cap correctly.
+		[Test]
+		public void ApproximateBytes_SurvivesDisposeAndReopen()
+		{
+			long expectedBytes;
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				spool.Enqueue(MakeEvent("Event-0"));
+				spool.Enqueue(MakeEvent("Event-1"));
+				expectedBytes = spool.ApproximateBytes;
+				Assert.Greater(expectedBytes, 0);
+			}
+
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				Assert.AreEqual(expectedBytes, reopened.ApproximateBytes,
+					"the byte total must be re-measured from the live entries on open");
+				Assert.AreEqual(2, reopened.ApproximateCount, "measuring must not consume the entries");
+			}
+		}
+
+		// 8a4. ProcessBatch byte budget: processing stops once the sent bytes reach maxBytes, but
+		// a single event over the whole budget still goes (forward progress is guaranteed).
+		[Test]
+		public async Task ProcessBatch_ByteBudget_StopsAfterBudgetButNeverStarves()
+		{
+			var events = new[] { MakeEvent("Event-0"), MakeEvent("Event-1"), MakeEvent("Event-2"),
+				MakeEvent("Event-3"), MakeEvent("Event-4") };
+			// A budget the first two events fit under but the third pushes past.
+			long budget = events[0].ToBytes().Length + events[1].ToBytes().Length + 1;
+
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				foreach (var evt in events)
+					spool.Enqueue(evt);
+
+				var firstCall = new List<string>();
+				await spool.ProcessBatchAsync(10, evt =>
+				{
+					firstCall.Add(evt.EventName);
+					return Task.FromResult(SendResult.Delivered);
+				}, budget);
+
+				CollectionAssert.AreEqual(new[] { "Event-0", "Event-1", "Event-2" }, firstCall,
+					"the budget is checked AFTER each event, so the event that crosses it is still sent");
+				Assert.AreEqual(2, spool.ApproximateCount);
+
+				// A budget smaller than any single event must still make progress, one event per call.
+				var secondCall = new List<string>();
+				await spool.ProcessBatchAsync(10, evt =>
+				{
+					secondCall.Add(evt.EventName);
+					return Task.FromResult(SendResult.Delivered);
+				}, maxBytes: 1);
+
+				CollectionAssert.AreEqual(new[] { "Event-3" }, secondCall);
+				Assert.AreEqual(1, spool.ApproximateCount);
+			}
+		}
+
 		// 8b. ProcessBatch honors maxItems: with more events spooled than the batch size, exactly
 		// maxItems are attempted per call and the rest stay put for the next call.
 		[Test]
