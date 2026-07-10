@@ -555,6 +555,38 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// ---- PER-EVENT SIZE CAP -------------------------------------------------------------------
+
+		// An event over the spool's per-event byte cap (production: Mixpanel's documented 1MB
+		// limit) is refused at Track time: never spooled, never handed to the sender, and counted
+		// as Failed -- NOT left to wedge the head of the queue as an eternally-retryable timeout.
+		[Test]
+		public async Task Track_EventOverSizeCap_IsDroppedCountedFailedAndNeverReachesSender()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10, maxItemBytes: 500))
+			{
+				var sender = new AlwaysResultSender(SendResult.Delivered);
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "Exception",
+					new JsonObject { { "Stack Trace", new string('x', 2000) } });
+
+				Assert.AreEqual(0, spool.ApproximateCount, "the oversized event must never be spooled");
+				Assert.AreEqual(1, client.Statistics.Submitted);
+				Assert.AreEqual(1, client.Statistics.Failed);
+
+				await client.DrainOnceAsync();
+				Assert.AreEqual(0, sender.CallCount, "the oversized event must never reach the sender");
+
+				// A normal event on the same client still flows end to end.
+				client.Track("user-1", "Save", null);
+				await client.DrainOnceAsync();
+				Assert.AreEqual(1, sender.CallCount);
+				Assert.AreEqual(1, client.Statistics.Succeeded);
+			}
+		}
+
 		// ---- STATISTICS -------------------------------------------------------------------------
 
 		[Test]

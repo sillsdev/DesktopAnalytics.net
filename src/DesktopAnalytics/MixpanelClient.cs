@@ -32,6 +32,14 @@ namespace DesktopAnalytics
 		private const int kDefaultBatchSize = 20;
 		private const int kDefaultFlushIntervalSeconds = 30;
 
+		// Mixpanel's documented per-event limit: 1MB of uncompressed JSON
+		// (https://docs.mixpanel.com/reference/import-events, "Common Issues"). An event over this
+		// can never be delivered, so it is refused at enqueue time (counted in Statistics.Failed)
+		// instead of spooled -- if it merely got rejected we'd catch it as a PoisonDrop, but one
+		// large enough to time out the HTTP request would classify as RETRYABLE (a timeout is
+		// indistinguishable from being offline) and wedge the head of the queue forever.
+		private const int kMaxSpooledEventBytes = 1024 * 1024;
+
 		// On (re)start, attempt the first drain soon rather than waiting a full interval, so events
 		// spooled during a PREVIOUS (offline) session go out shortly after launch instead of ~30s later.
 		private const int kInitialFlushDelaySeconds = 3;
@@ -99,7 +107,8 @@ namespace DesktopAnalytics
 					Math.Max(1, flushInterval > 0 ? flushInterval : kDefaultFlushIntervalSeconds));
 
 				_timeProvider = TimeProvider.System;
-				_spool = new EventSpool(EventSpool.GetDefaultSpoolPath(apiSecret), kDefaultMaxSpoolItems);
+				_spool = new EventSpool(EventSpool.GetDefaultSpoolPath(apiSecret), kDefaultMaxSpoolItems,
+					kMaxSpooledEventBytes);
 				_sender = new MixpanelEventSender(apiSecret);
 				_pipeline = BuildDefaultPipeline(_timeProvider);
 
@@ -408,9 +417,11 @@ namespace DesktopAnalytics
 		/// Scrubs the event name and every string property value (this is where stack traces --
 		/// spooled as the "Stack Trace" property of the "Exception" event -- get their embedded user
 		/// paths normalized), stamps $insert_id/time via <see cref="AnalyticsEvent.Create"/>, and
-		/// enqueues into the spool. Never throws once initialized; calling it on a client that was
-		/// never initialized at all is a programming error in the host and throws (matching the
-		/// original MixpanelClient, which dereferenced a null field in that case).
+		/// enqueues into the spool. An event over Mixpanel's per-event size limit (see
+		/// <see cref="kMaxSpooledEventBytes"/>) is refused at enqueue and counted in
+		/// <see cref="Statistics.Failed"/>. Never throws once initialized; calling it on a client
+		/// that was never initialized at all is a programming error in the host and throws
+		/// (matching the original MixpanelClient, which dereferenced a null field in that case).
 		/// </summary>
 		public void Track(string analyticsId, string eventName, JsonObject properties)
 		{
@@ -436,8 +447,14 @@ namespace DesktopAnalytics
 					scrubbedProperties,
 					time: _timeProvider.GetUtcNow());
 
-				_spool.Enqueue(evt);
 				Interlocked.Increment(ref _submitted);
+				if (!_spool.Enqueue(evt))
+				{
+					// Dropped at enqueue (most likely over the per-event size cap; see
+					// kMaxSpooledEventBytes) -- surface it in the statistics like any other
+					// undeliverable event.
+					Interlocked.Increment(ref _failed);
+				}
 			}
 			catch (Exception e)
 			{

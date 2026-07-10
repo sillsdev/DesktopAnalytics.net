@@ -340,6 +340,28 @@ namespace DesktopAnalyticsTests
 			}
 		}
 
+		// 8a. Per-event byte cap: an event whose serialized form exceeds maxItemBytes is refused
+		// (Enqueue returns false) and never spooled, while a normal event on the same spool is
+		// accepted -- and Enqueue's return value distinguishes the two.
+		[Test]
+		public void Enqueue_EventLargerThanMaxItemBytes_IsRefusedWhileNormalEventIsAccepted()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10, maxItemBytes: 500))
+			{
+				var oversized = AnalyticsEvent.Create("user-1", "Huge",
+					new Segment.Serialization.JsonObject
+					{
+						{ "Stack Trace", new string('x', 2000) }
+					});
+
+				Assert.IsFalse(spool.Enqueue(oversized), "an event over the byte cap must be refused");
+				Assert.AreEqual(0, spool.ApproximateCount);
+
+				Assert.IsTrue(spool.Enqueue(MakeEvent("Normal")), "a normal event must still be accepted");
+				Assert.AreEqual(1, spool.ApproximateCount);
+			}
+		}
+
 		// 8b. ProcessBatch honors maxItems: with more events spooled than the batch size, exactly
 		// maxItems are attempted per call and the rest stay put for the next call.
 		[Test]

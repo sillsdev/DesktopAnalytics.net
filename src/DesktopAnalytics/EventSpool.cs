@@ -54,6 +54,7 @@ namespace DesktopAnalytics
 		private const int kApiKeyHashBytes = 8;
 
 		private readonly int _maxItems;
+		private readonly int _maxItemBytes;
 		private readonly string _spoolDirectory;
 		// Not readonly: Purge replaces the queue wholesale (see its remarks). Always accessed
 		// under _sync. Null only if a Purge-time reopen failed; every public method already
@@ -76,16 +77,23 @@ namespace DesktopAnalytics
 		/// this from <see cref="GetDefaultSpoolPath"/>; tests typically inject a temp directory.</param>
 		/// <param name="maxItems">The maximum number of events retained. Enqueuing beyond this
 		/// drops the oldest event(s) first.</param>
+		/// <param name="maxItemBytes">The maximum serialized size of a single event; anything
+		/// larger is refused at enqueue time (<see cref="Enqueue"/> returns false) rather than
+		/// spooled. Defaults to unbounded; <see cref="MixpanelClient"/> passes the transport's
+		/// real per-event limit.</param>
 		/// <exception cref="Exception">Propagates whatever DiskQueue throws if the lock cannot be
 		/// acquired within the internal wait timeout (e.g. another process/instance already has
 		/// this spool open) or if the directory cannot be created/opened. This is deliberately not
 		/// swallowed: it is a startup-time failure the caller needs to know about.</exception>
-		public EventSpool(string spoolDirectory, int maxItems)
+		public EventSpool(string spoolDirectory, int maxItems, int maxItemBytes = int.MaxValue)
 		{
 			if (maxItems < 0)
 				throw new ArgumentOutOfRangeException(nameof(maxItems));
+			if (maxItemBytes <= 0)
+				throw new ArgumentOutOfRangeException(nameof(maxItemBytes));
 
 			_maxItems = maxItems;
+			_maxItemBytes = maxItemBytes;
 			_spoolDirectory = spoolDirectory;
 			_queue = PersistentQueue.WaitFor(spoolDirectory, s_lockWaitTimeout);
 		}
@@ -146,15 +154,18 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Serializes and enqueues <paramref name="evt"/>, then enforces the configured cap by
+		/// Serializes and enqueues <paramref name="evt"/>, then enforces the configured item cap by
 		/// dropping the oldest event(s) if necessary. Never throws: any disk/IO/serialization
 		/// failure is logged and swallowed, and the event is simply lost rather than crashing the
 		/// host.
 		/// </summary>
-		public void Enqueue(AnalyticsEvent evt)
+		/// <returns>True if the event was durably enqueued; false if it was dropped (null,
+		/// unserializable, larger than the per-event byte cap, or a disk failure). Callers use
+		/// this to count the drop -- see <see cref="MixpanelClient.Track"/>.</returns>
+		public bool Enqueue(AnalyticsEvent evt)
 		{
 			if (evt == null)
-				return;
+				return false;
 
 			try
 			{
@@ -166,7 +177,18 @@ namespace DesktopAnalytics
 				catch (Exception e)
 				{
 					Debug.WriteLine("EventSpool.Enqueue: failed to serialize event, dropping: " + e);
-					return;
+					return false;
+				}
+
+				if (bytes.Length > _maxItemBytes)
+				{
+					// Refused up front rather than spooled: an event over the transport's per-event
+					// limit can never be delivered, and if it is large enough to time out the HTTP
+					// request it would be classified as a RETRYABLE failure (a timeout is
+					// indistinguishable from being offline) and wedge the head of the queue forever.
+					Debug.WriteLine("EventSpool.Enqueue: event of " + bytes.Length +
+						" bytes exceeds the " + _maxItemBytes + "-byte cap, dropping: " + evt.EventName);
+					return false;
 				}
 
 				_sync.Wait();
@@ -184,10 +206,13 @@ namespace DesktopAnalytics
 				{
 					_sync.Release();
 				}
+
+				return true;
 			}
 			catch (Exception e)
 			{
 				Debug.WriteLine("EventSpool.Enqueue failed: " + e);
+				return false;
 			}
 		}
 
