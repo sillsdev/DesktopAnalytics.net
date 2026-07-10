@@ -343,6 +343,8 @@ namespace DesktopAnalyticsTests
 			Assert.DoesNotThrow(() => client.Track("user-1", "Save", null));
 			Assert.DoesNotThrowAsync(async () => await client.DrainOnceAsync());
 			Assert.DoesNotThrow(() => client.Flush());
+			Assert.DoesNotThrowAsync(async () => await client.FlushAsync());
+			Assert.DoesNotThrowAsync(async () => await client.ShutDownAsync());
 			Assert.DoesNotThrow(() => client.ShutDown());
 		}
 
@@ -471,6 +473,85 @@ namespace DesktopAnalyticsTests
 					"Flush() must be bounded even against a server that never responds");
 				Assert.AreEqual(1, spool.ApproximateCount,
 					"the undelivered event must remain in the spool after a bounded flush");
+			}
+		}
+
+		// ---- ASYNC PUBLIC SURFACE (FlushAsync/ShutDownAsync) -------------------------------------
+		//
+		// The async counterparts must honor the same bounds as their sync wrappers. Awaited
+		// directly (no Task.Run + outer timeout) -- if the bound regressed, these would hang the
+		// awaiting test and fail via the test runner's timeout, same signal as the sync tests.
+
+		[Test]
+		public async Task ShutDownAsync_SenderBlocksUntilCanceled_ReturnsWithinBoundAndEventRemainsInSpool()
+		{
+			var spool = new EventSpool(_spoolDir, 10);
+			var sender = new BlockingUntilCanceledSender();
+			var client = new MixpanelClient();
+			client.InitializeForTest(spool, sender);
+
+			client.Track("user-1", "Save", null);
+
+			var stopwatch = Stopwatch.StartNew();
+			await client.ShutDownAsync();
+			stopwatch.Stop();
+
+			Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(10),
+				"ShutDownAsync() must be bounded even against a server that never responds");
+			Assert.GreaterOrEqual(sender.CallCount, 1);
+
+			// ShutDownAsync() must have released the spool's cross-process lock -- reopening it and
+			// finding the event proves nothing was lost (it was rolled back, not flushed) and that
+			// the lock really was released.
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				Assert.AreEqual(1, reopened.ApproximateCount,
+					"the undelivered event must remain in the spool after a bounded shutdown");
+			}
+		}
+
+		[Test]
+		public async Task FlushAsync_SenderBlocksUntilCanceled_ReturnsWithinBoundAndEventRemainsInSpool()
+		{
+			using (var spool = new EventSpool(_spoolDir, 10))
+			{
+				var sender = new BlockingUntilCanceledSender();
+				var client = new MixpanelClient();
+				client.InitializeForTest(spool, sender);
+
+				client.Track("user-1", "Save", null);
+
+				var stopwatch = Stopwatch.StartNew();
+				await client.FlushAsync();
+				stopwatch.Stop();
+
+				Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(10),
+					"FlushAsync() must be bounded even against a server that never responds");
+				Assert.AreEqual(1, spool.ApproximateCount,
+					"the undelivered event must remain in the spool after a bounded flush");
+			}
+		}
+
+		// ShutDownAsync followed by Dispose (the natural shape for a host that awaits ShutDownAsync
+		// inside a `using` over the Analytics facade) must be a harmless no-op the second time.
+		[Test]
+		public async Task ShutDownAsync_ThenSyncShutDown_IsIdempotent()
+		{
+			var spool = new EventSpool(_spoolDir, 10);
+			var client = new MixpanelClient();
+			client.InitializeForTest(spool, new AlwaysResultSender(SendResult.Delivered));
+
+			client.Track("user-1", "Save", null);
+
+			await client.ShutDownAsync();
+			Assert.DoesNotThrow(() => client.ShutDown());
+
+			// The spool's cross-process lock must be released (and stay released) -- reopening
+			// proves it.
+			using (var reopened = new EventSpool(_spoolDir, 10))
+			{
+				Assert.AreEqual(0, reopened.ApproximateCount,
+					"the event was delivered during the first shutdown's bounded drain");
 			}
 		}
 

@@ -1,4 +1,5 @@
-﻿using Segment.Serialization;
+﻿using System.Threading.Tasks;
+using Segment.Serialization;
 
 namespace DesktopAnalytics
 {
@@ -9,6 +10,21 @@ namespace DesktopAnalytics
 		void Identify(string analyticsId, JsonObject traits, JsonObject options);
 		void Track(string defaultIdForAnalytics, string eventName, JsonObject properties);
 		void Flush();
+
+		/// <summary>
+		/// Async counterpart of <see cref="ShutDown"/>. Implementations whose shutdown has nothing
+		/// awaitable (see <see cref="SegmentClient"/>) may complete synchronously; implementations
+		/// with real async delivery work (see <see cref="MixpanelClient"/>) must never block a
+		/// thread waiting on it. Like every member here, must not throw.
+		/// </summary>
+		Task ShutDownAsync();
+
+		/// <summary>
+		/// Async counterpart of <see cref="Flush"/>. Same contract notes as
+		/// <see cref="ShutDownAsync"/>.
+		/// </summary>
+		Task FlushAsync();
+
 		Statistics Statistics { get; }
 
 		/// <summary>

@@ -514,18 +514,31 @@ namespace DesktopAnalytics
 			}
 		}
 
-		/// <summary>Bounded drain; returns fast even while offline. See <see cref="BoundedDrainAsync"/>.</summary>
+		/// <summary>Bounded drain; returns fast even while offline. See <see cref="BoundedDrainAsync"/>.
+		/// Never faults.</summary>
+		public async Task FlushAsync()
+		{
+			try
+			{
+				await BoundedDrainAsync().ConfigureAwait(false);
+			}
+			catch (Exception e)
+			{
+				Debug.WriteLine("MixpanelClient.Flush failed: " + e);
+			}
+		}
+
+		/// <summary>Synchronous <see cref="FlushAsync"/>.</summary>
 		/// <remarks>
-		/// IClient's Flush/ShutDown are synchronous, so this blocks on the bounded drain -- safe
-		/// even from a UI thread because the entire drain path awaits with ConfigureAwait(false)
-		/// (no continuation ever needs the caller's SynchronizationContext), and the drain itself
-		/// is bounded to a few seconds.
+		/// Blocks on the bounded drain -- safe even from a UI thread because the entire drain path
+		/// awaits with ConfigureAwait(false) (no continuation ever needs the caller's
+		/// SynchronizationContext), and the drain itself is bounded to a few seconds.
 		/// </remarks>
 		public void Flush()
 		{
 			try
 			{
-				BoundedDrainAsync().GetAwaiter().GetResult();
+				FlushAsync().GetAwaiter().GetResult();
 			}
 			catch (Exception e)
 			{
@@ -536,13 +549,16 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// Bounded drain, then release the spool's cross-process lock. Never hangs, even fully
 		/// offline: undelivered events simply remain on disk for the next launch to pick up.
+		/// Never faults, and is idempotent -- a redundant <see cref="ShutDown"/> (e.g. Dispose on
+		/// the <see cref="Analytics"/> facade after an explicit ShutDownAsync) finds a stopped
+		/// timer, an empty-reporting spool, and a no-op re-Dispose.
 		/// </summary>
-		public void ShutDown()
+		public async Task ShutDownAsync()
 		{
 			try
 			{
 				StopTimerPermanently();
-				BoundedDrainAsync().GetAwaiter().GetResult();
+				await BoundedDrainAsync().ConfigureAwait(false);
 			}
 			catch (Exception e)
 			{
@@ -558,6 +574,20 @@ namespace DesktopAnalytics
 				{
 					Debug.WriteLine("MixpanelClient.ShutDown: failed to dispose spool: " + e);
 				}
+			}
+		}
+
+		/// <summary>Synchronous <see cref="ShutDownAsync"/>. See <see cref="Flush"/> for why
+		/// blocking here is safe.</summary>
+		public void ShutDown()
+		{
+			try
+			{
+				ShutDownAsync().GetAwaiter().GetResult();
+			}
+			catch (Exception e)
+			{
+				Debug.WriteLine("MixpanelClient.ShutDown failed: " + e);
 			}
 		}
 

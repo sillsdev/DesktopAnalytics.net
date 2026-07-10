@@ -11,6 +11,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using JetBrains.Annotations;
@@ -739,6 +740,19 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
+		/// Async alternative to <see cref="Dispose"/> for hosts that shut down asynchronously:
+		/// flushes/shuts down the underlying client without blocking a thread on any in-flight
+		/// delivery. Bounded just like Dispose -- an offline shutdown still returns promptly, with
+		/// undelivered events left on disk (Mixpanel) or in the transport library's own store
+		/// (Segment) for the next launch. Calling <see cref="Dispose"/> afterwards (e.g. from a
+		/// <c>using</c> block wrapping this object) is a harmless no-op.
+		/// </summary>
+		public Task ShutDownAsync()
+		{
+			return _client?.ShutDownAsync() ?? Task.CompletedTask;
+		}
+
+		/// <summary>
 		/// Indicates whether we are tracking or not
 		/// </summary>
 		public static bool AllowTracking
@@ -1111,6 +1125,16 @@ namespace DesktopAnalytics
 		public static void FlushClient()
 		{
 			s_singleton._client?.Flush();
+		}
+
+		/// <summary>
+		/// Async counterpart of <see cref="FlushClient"/>: attempts delivery of anything pending
+		/// without blocking a thread on the network. Bounded -- returns promptly even while
+		/// offline, leaving undelivered events queued.
+		/// </summary>
+		public static Task FlushClientAsync()
+		{
+			return s_singleton._client?.FlushAsync() ?? Task.CompletedTask;
 		}
 	}
 }

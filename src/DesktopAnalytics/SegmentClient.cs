@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using Segment.Concurrent;
 using Segment.Serialization;
 
@@ -65,6 +66,24 @@ namespace DesktopAnalytics
 		public void Flush()
 		{
 			_analytics.Flush();
+		}
+
+		/// <summary>
+		/// Completes synchronously: Segment.Analytics.CSharp's <c>Flush()</c> only signals the
+		/// library's own background delivery (its coroutine system) and exposes nothing awaitable,
+		/// so there is no async work to represent here.
+		/// </summary>
+		public Task ShutDownAsync()
+		{
+			ShutDown();
+			return Task.CompletedTask;
+		}
+
+		/// <summary>See <see cref="ShutDownAsync"/> for why this completes synchronously.</summary>
+		public Task FlushAsync()
+		{
+			Flush();
+			return Task.CompletedTask;
 		}
 
 		public Statistics Statistics => new Statistics(StatMonitor.Submitted,
