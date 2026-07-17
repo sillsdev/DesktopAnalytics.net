@@ -20,7 +20,12 @@ namespace SampleAppWithForm
 				return 1;
 			}
 
-			if (!Enum.TryParse<ClientType>(args[1], true, out var clientType))
+			IClient client;
+			if (args[1].Equals("Segment", StringComparison.OrdinalIgnoreCase))
+				client = new SegmentClient();
+			else if (args[1].Equals("Mixpanel", StringComparison.OrdinalIgnoreCase))
+				client = new MixpanelClient();
+			else
 			{
 				Console.WriteLine($"Usage: SampleApp <analyticsApiSecret> <Segment|Mixpanel|???>{Environment.NewLine}Unrecognized client type: {args[1]}");
 				return 1;
@@ -44,7 +49,7 @@ namespace SampleAppWithForm
 			if (!int.TryParse(args.Skip(2).SingleOrDefault(a => a.StartsWith("-f:"))?.Substring(3), out var flushInterval))
 				flushInterval = -1;
 
-			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent, clientType: clientType, flushAt: flushAt,
+			using (new Analytics(args[0], userInfo, propertiesThatGoWithEveryEvent, client: client, flushAt: flushAt,
 				       flushInterval: flushInterval))
 			{
 				var mainWindow = new Form1();

@@ -19,6 +19,7 @@
     <Project>{BECACF91-9A84-4667-B678-44ACA350D413}</Project>
     <Name>DesktopAnalytics</Name>
   </ProjectReference>
+  <ProjectReference Include="..\DesktopAnalytics.Mixpanel\DesktopAnalytics.Mixpanel.csproj" />
 </ItemGroup>
 <ItemGroup>
   <Reference Include="System" />

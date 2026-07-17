@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup>
+	<TargetFrameworks>net462;netstandard2.0;net8.0</TargetFrameworks>
+	<PackageId>SIL.DesktopAnalytics.Mixpanel</PackageId>
+	<Authors>John Hatton, Stephen McConnel, Tom Bogle, Eberhard Beilharz, John Thomson, Andrew Polk, Jason Naylor</Authors>
+	<Company>SIL International</Company>
+	<PackageLicenseExpression>MIT</PackageLicenseExpression>
+	<PackageProjectUrl>https://github.com/sillsdev/desktopanalytics.net</PackageProjectUrl>
+	<RepositoryUrl>https://github.com/sillsdev/desktopanalytics.net</RepositoryUrl>
+	<Description>Durable Mixpanel client (disk-backed event spool) for SIL.DesktopAnalytics.</Description>
+</PropertyGroup>
+<PropertyGroup>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <SignAssembly>False</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\DesktopAnalytics.snk</AssemblyOriginatorKeyFile>
+</PropertyGroup>
+<ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+    <PackageReference Include="Polly" Version="8.4.2" />
+</ItemGroup>
+<ItemGroup>
+  <PackageReference Include="mixpanel-csharp" Version="6.0.0" />
+  <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  <PackageReference Include="GitVersion.MsBuild" Version="5.12.0">
+    <PrivateAssets>all</PrivateAssets>
+    <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+  </PackageReference>
+</ItemGroup>
+<ItemGroup>
+  <ProjectReference Include="..\DesktopAnalytics\DesktopAnalytics.csproj" />
+</ItemGroup>
+<ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+    <_Parameter1>DesktopAnalyticsTests.Mixpanel</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

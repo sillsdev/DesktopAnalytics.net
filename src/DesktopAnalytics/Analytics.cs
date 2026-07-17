@@ -11,6 +11,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using JetBrains.Annotations;
@@ -59,6 +60,12 @@ namespace DesktopAnalytics
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
+#if NET462
+		private static readonly IAnalyticsSettingsStore s_settings = new NetFrameworkAnalyticsSettingsStore();
+#else
+		private static readonly IAnalyticsSettingsStore s_settings = new JsonAnalyticsSettingsStore();
+#endif
+
 		private class InitializationParameters
 		{
 			public string ApiSecret;
@@ -79,7 +86,9 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, this will not do any communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent
 		/// communication of personally identifiable information to the analytics server.</param>
-		/// <param name="clientType"><see cref="ClientType"/></param>
+		/// <param name="client">The <see cref="IClient"/> to use, e.g. a <see cref="SegmentClient"/>
+		/// or a Mixpanel client from the separate SIL.DesktopAnalytics.Mixpanel package. If null,
+		/// defaults to a new <see cref="SegmentClient"/>.</param>
 		/// <param name="host">The url of the host to send analytics to. Will use the client's
 		/// default if not provided. Throws an ArgumentException if the client does not support
 		/// setting the host.</param>
@@ -93,7 +102,7 @@ namespace DesktopAnalytics
 			UserInfo userInfo,
 			bool allowTracking = true,
 			bool retainPii = false,
-			ClientType clientType = ClientType.Segment,
+			IClient client = null,
 			string host = null,
 			bool useCallingAssemblyVersion = false) : this(
 				apiSecret,
@@ -101,7 +110,7 @@ namespace DesktopAnalytics
 				new Dictionary<string, string>(),
 				allowTracking,
 				retainPii,
-				clientType,
+				client,
 				host,
 				assemblyToUseForVersion: useCallingAssemblyVersion ? GetCallingAssembly() : null
 			)
@@ -128,7 +137,7 @@ namespace DesktopAnalytics
 			if (!AllowTracking && !initializing)
 				return;
 
-			_client.Identify(AnalyticsSettings.Default.IdForAnalytics, s_traits, s_locationInfo);
+			_client.Identify(s_settings.IdForAnalytics, s_traits, s_locationInfo);
 		}
 
 		/// <summary>
@@ -141,7 +150,9 @@ namespace DesktopAnalytics
 		/// <param name="allowTracking">If false, prevents communication with segment.io</param>
 		/// <param name="retainPii">If false, userInfo will be stripped/hashed/adjusted to prevent
 		/// communication of personally identifiable information to the analytics server.</param>
-		/// <param name="clientType"><see cref="ClientType"/></param>
+		/// <param name="client">The <see cref="IClient"/> to use, e.g. a <see cref="SegmentClient"/>
+		/// or a Mixpanel client from the separate SIL.DesktopAnalytics.Mixpanel package. If null,
+		/// defaults to a new <see cref="SegmentClient"/>.</param>
 		/// <param name="host">The url of the host to send analytics to. Will use the client's
 		/// default if not provided. Throws an ArgumentException if the client does not support
 		/// setting the host.</param>
@@ -159,7 +170,7 @@ namespace DesktopAnalytics
 			Dictionary<string, string> propertiesThatGoWithEveryEvent,
 			bool allowTracking = true,
 			bool retainPii = false,
-			ClientType clientType = ClientType.Segment,
+			IClient client = null,
 			string host = null,
 			int flushAt = -1,
 			int flushInterval = -1,
@@ -172,25 +183,11 @@ namespace DesktopAnalytics
 			}
 			s_singleton = this;
 
-			switch (clientType)
-			{
-				case ClientType.Segment:
-				{
-					var segmentClient = new SegmentClient();
-					segmentClient.Failed += Client_Failed;
-					_client = segmentClient;
-					break;
-				}
-				case ClientType.Mixpanel:
-				{
-					_client = new MixpanelClient();
-					break;
-				}
-				default:
-				{
-					throw new ArgumentException("Unknown client type", nameof(clientType));
-				}
-			}
+			if (client == null)
+				client = new SegmentClient();
+			if (client is SegmentClient segmentClient)
+				segmentClient.Failed += Client_Failed;
+			_client = client;
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
 			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
@@ -221,13 +218,13 @@ namespace DesktopAnalytics
 		private void Initialize(InitializationParameters parameters)
 		{
 			// Bring in settings from any previous version.
-			if (AnalyticsSettings.Default.NeedUpgrade)
+			if (s_settings.NeedUpgrade)
 			{
 				//see http://stackoverflow.com/questions/3498561/net-applicationsettingsbase-should-i-call-upgrade-every-time-i-load
 				try
 				{
-					AnalyticsSettings.Default.Upgrade();
-					AnalyticsSettings.Default.NeedUpgrade = false;
+					s_settings.Upgrade();
+					s_settings.NeedUpgrade = false;
 					TrySaveSettings();
 				}
 				catch (ConfigurationErrorsException e)
@@ -243,7 +240,7 @@ namespace DesktopAnalytics
 				}
 			}
 
-			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+			if (IsNullOrEmpty(s_settings.IdForAnalytics))
 			{
 				// Apparently a first-time installation. If possible, we really want to use the
 				// same ID (from another channel of this app) to keep our statistics valid.
@@ -264,9 +261,9 @@ namespace DesktopAnalytics
 				parameters.FlushInterval
 			);
 
-			if (IsNullOrEmpty(AnalyticsSettings.Default.IdForAnalytics))
+			if (IsNullOrEmpty(s_settings.IdForAnalytics))
 			{
-				AnalyticsSettings.Default.IdForAnalytics = Guid.NewGuid().ToString();
+				s_settings.IdForAnalytics = Guid.NewGuid().ToString();
 				TrySaveSettings();
 			}
 
@@ -299,18 +296,18 @@ namespace DesktopAnalytics
 			// unlikely event that they do, it's not the end of the world.
 			s_allowTracking = true;
 
-			if (IsNullOrEmpty(AnalyticsSettings.Default.LastVersionLaunched))
+			if (IsNullOrEmpty(s_settings.LastVersionLaunched))
 			{
 				// "Created" is a special property that segment.io understands and coverts to
 				// equivalents in various analytics services. So it's not as descriptive for us as
 				// "FirstLaunchOnSystem", but it will give the best experience on the analytics sites.
 				TrackWithApplicationProperties("Created");
 			}
-			else if (AnalyticsSettings.Default.LastVersionLaunched != versionNumberWithBuild)
+			else if (s_settings.LastVersionLaunched != versionNumberWithBuild)
 			{
 				TrackWithApplicationProperties("Upgrade", new JsonObject
 				{
-					{"OldVersion", AnalyticsSettings.Default.LastVersionLaunched},
+					{"OldVersion", s_settings.LastVersionLaunched},
 				});
 			}
 
@@ -318,7 +315,7 @@ namespace DesktopAnalytics
 			// but that is done after we retrieve (or fail to retrieve) our external IP address.
 			// See http://issues.bloomlibrary.org/youtrack/issue/BL-4011.
 
-			AnalyticsSettings.Default.LastVersionLaunched = versionNumberWithBuild;
+			s_settings.LastVersionLaunched = versionNumberWithBuild;
 			TrySaveSettings();
 		}
 
@@ -329,7 +326,7 @@ namespace DesktopAnalytics
 			{
 				try
 				{
-					AnalyticsSettings.Default.Save();
+					s_settings.Save();
 					return;
 				}
 				catch (Exception e)
@@ -415,24 +412,24 @@ namespace DesktopAnalytics
 						string analyticsId = idSetting.Value;
 						if (IsNullOrEmpty(analyticsId))
 							continue;
-						AnalyticsSettings.Default.IdForAnalytics = analyticsId;
-						AnalyticsSettings.Default.FirstName = ExtractSetting(
-							AnalyticsSettings.Default.FirstName,
+						s_settings.IdForAnalytics = analyticsId;
+						s_settings.FirstName = ExtractSetting(
+							s_settings.FirstName,
 							doc,
 							"FirstName"
 						);
-						AnalyticsSettings.Default.LastName = ExtractSetting(
-							AnalyticsSettings.Default.LastName,
+						s_settings.LastName = ExtractSetting(
+							s_settings.LastName,
 							doc,
 							"LastName"
 						);
-						AnalyticsSettings.Default.LastVersionLaunched = ExtractSetting(
-							AnalyticsSettings.Default.LastVersionLaunched,
+						s_settings.LastVersionLaunched = ExtractSetting(
+							s_settings.LastVersionLaunched,
 							doc,
 							"LastVersionLaunched"
 						);
-						AnalyticsSettings.Default.Email = ExtractSetting(
-							AnalyticsSettings.Default.Email,
+						s_settings.Email = ExtractSetting(
+							s_settings.Email,
 							doc,
 							"Email"
 						);
@@ -680,6 +677,46 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
+		/// Async counterpart of <see cref="Track(string)"/>, for callers (e.g. FW Lite) that await
+		/// pervasively. See <see cref="IClient.TrackAsync"/> for why this need not (and, for
+		/// <c>MixpanelClient</c>, does not) represent genuinely non-blocking work -- it is API
+		/// ergonomics, not a change to when/how the event is sent.
+		/// </summary>
+		/// <param name="eventName">A good event name should be meaningful to a developer or
+		/// analyst, relatively short, and unique within an app.</param>
+		/// <param name="cancellationToken">Passed through to the underlying client; never faults
+		/// the task.</param>
+		[PublicAPI]
+		public static Task TrackAsync(string eventName, CancellationToken cancellationToken = default)
+		{
+			if (!AllowTracking)
+				return Task.CompletedTask;
+
+			return TrackWithApplicationPropertiesAsync(eventName, null, cancellationToken);
+		}
+
+		/// <summary>
+		/// Async counterpart of <see cref="Track(string, Dictionary{string, string})"/>. See
+		/// <see cref="TrackAsync(string, CancellationToken)"/> for the async-ergonomics rationale.
+		/// </summary>
+		/// <param name="eventName">A good event name should be meaningful to a developer or
+		/// analyst, relatively short, and unique within an app.</param>
+		/// <param name="properties">A dictionary of key-value pairs that are relevant in
+		/// understanding more about the event being tracked.</param>
+		/// <param name="cancellationToken">Passed through to the underlying client; never faults
+		/// the task.</param>
+		[PublicAPI]
+		public static Task TrackAsync(string eventName, Dictionary<string, string> properties,
+			CancellationToken cancellationToken = default)
+		{
+			if (!AllowTracking)
+				return Task.CompletedTask;
+
+			return TrackWithApplicationPropertiesAsync(eventName, MakeSegmentIOProperties(properties),
+				cancellationToken);
+		}
+
+		/// <summary>
 		/// Sends the exception's message and stacktrace
 		/// </summary>
 		/// <param name="e"></param>
@@ -690,22 +727,61 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
+		/// Async counterpart of <see cref="ReportException(Exception)"/>. See
+		/// <see cref="TrackAsync(string, CancellationToken)"/> for the async-ergonomics rationale.
+		/// </summary>
+		[PublicAPI]
+		public static Task ReportExceptionAsync(Exception e, CancellationToken cancellationToken = default)
+		{
+			return ReportExceptionAsync(e, null, cancellationToken);
+		}
+
+		/// <summary>
 		/// Sends the exception's message and stacktrace, plus additional information the
 		/// program thinks may be relevant. Limited to MAX_EXCEPTION_REPORTS_PER_RUN
 		/// </summary>
 		public static void ReportException(Exception e, Dictionary<string, string> moreProperties)
 		{
-			if (!AllowTracking)
+			var props = BuildExceptionReportProperties(e, moreProperties);
+			if (props == null)
 				return;
+
+			TrackWithApplicationProperties("Exception", props);
+		}
+
+		/// <summary>
+		/// Async counterpart of <see cref="ReportException(Exception, Dictionary{string, string})"/>,
+		/// including the same MAX_EXCEPTION_REPORTS_PER_RUN throttling (the counter is shared with
+		/// the sync path). See <see cref="TrackAsync(string, CancellationToken)"/> for the
+		/// async-ergonomics rationale.
+		/// </summary>
+		[PublicAPI]
+		public static Task ReportExceptionAsync(Exception e, Dictionary<string, string> moreProperties,
+			CancellationToken cancellationToken = default)
+		{
+			var props = BuildExceptionReportProperties(e, moreProperties);
+			if (props == null)
+				return Task.CompletedTask;
+
+			return TrackWithApplicationPropertiesAsync("Exception", props, cancellationToken);
+		}
+
+		// Shared throttle/property-building logic behind ReportException and ReportExceptionAsync,
+		// so the two can never silently drift. Returns null if the exception should not be tracked
+		// at all -- either AllowTracking is off, or this run is over kMaxExceptionReportsPerRun (see
+		// the incident note below) -- in which case the caller must not track anything.
+		private static JsonObject BuildExceptionReportProperties(Exception e,
+			Dictionary<string, string> moreProperties)
+		{
+			if (!AllowTracking)
+				return null;
 
 			s_exceptionCount++;
 
 			// we had an incident where some problem caused a user to emit hundreds of thousands of exceptions,
 			// in the background, blowing through our Analytics service limits and getting us kicked off.
 			if (s_exceptionCount > kMaxExceptionReportsPerRun)
-			{
-				return;
-			}
+				return null;
 
 			var props = new JsonObject
 			{
@@ -717,7 +793,7 @@ namespace DesktopAnalytics
 				foreach (var key in moreProperties.Keys)
 					props.Add(key, moreProperties[key]);
 			}
-			TrackWithApplicationProperties("Exception", props);
+			return props;
 		}
 
 		private static JsonObject MakeSegmentIOProperties(Dictionary<string, string> properties)
@@ -739,6 +815,22 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
+		/// Async alternative to <see cref="Dispose"/> for hosts that shut down asynchronously:
+		/// flushes/shuts down the underlying client without blocking a thread on any in-flight
+		/// delivery. Bounded just like Dispose -- an offline shutdown still returns promptly, with
+		/// undelivered events left on disk (Mixpanel) or in the transport library's own store
+		/// (Segment) for the next launch. Calling <see cref="Dispose"/> afterwards (e.g. from a
+		/// <c>using</c> block wrapping this object) is a harmless no-op.
+		/// </summary>
+		/// <param name="cancellationToken">Optionally ends the final delivery attempt even sooner
+		/// than its own bound; undelivered events stay queued for the next launch. Cancellation
+		/// never faults the task.</param>
+		public Task ShutDownAsync(CancellationToken cancellationToken = default)
+		{
+			return _client?.ShutDownAsync(cancellationToken) ?? Task.CompletedTask;
+		}
+
+		/// <summary>
 		/// Indicates whether we are tracking or not
 		/// </summary>
 		public static bool AllowTracking
@@ -748,6 +840,13 @@ namespace DesktopAnalytics
 			{
 				if (value == s_allowTracking)
 					return;
+
+				// Flip the flag FIRST, before any of the branching/purge logic below, so a
+				// concurrent Track()/ReportException() (which reads AllowTracking) observes the
+				// new value immediately. This shrinks the window in which a thread could still see
+				// AllowTracking == true (and enqueue an event) while a consent-revocation purge
+				// below is in progress or about to start.
+				s_allowTracking = value;
 
 				// The following is not strictly thread safe because another thread could set this
 				// after the singleton is created but before it checks the flag to decide whether
@@ -765,9 +864,35 @@ namespace DesktopAnalytics
 						s_singleton.Initialize(initializationParameters);
 						return; // Initialize sets s_allowTracking = true
 					}
+
+					// Already initialized and now re-enabled: re-arm any background flush loop that a
+					// prior PurgeQueuedEvents (consent revocation) paused. See offline-analytics.md.
+					try
+					{
+						s_singleton._client?.ResumeSending();
+					}
+					catch (Exception e)
+					{
+						Debug.WriteLine("Analytics.AllowTracking: ResumeSending failed: " + e);
+					}
 				}
 
-				s_allowTracking = value;
+				if (!value)
+				{
+					// Consent revoked: purge any durable client's on-disk spool immediately (see
+					// offline-analytics.md, "Consent & lifecycle"). Guarded against a null singleton
+					// (AllowTracking can technically be set before an Analytics object is
+					// constructed) and a null client (the Segment/Mixpanel client is only assigned
+					// inside the Analytics constructor).
+					try
+					{
+						s_singleton?._client?.PurgeQueuedEvents();
+					}
+					catch (Exception e)
+					{
+						Debug.WriteLine("Analytics.AllowTracking: PurgeQueuedEvents failed: " + e);
+					}
+				}
 			}
 		}
 
@@ -1038,6 +1163,38 @@ namespace DesktopAnalytics
 			if (!AllowTracking)
 				return;
 
+			s_singleton._client.Track(
+				s_settings.IdForAnalytics,
+				eventName,
+				MergeApplicationProperties(properties)
+			);
+		}
+
+		/// <summary>
+		/// Async counterpart of <see cref="TrackWithApplicationProperties"/>: same defaulting/merge
+		/// logic, routed through <see cref="IClient.TrackAsync"/> instead of <see cref="IClient.Track"/>.
+		/// </summary>
+		private static Task TrackWithApplicationPropertiesAsync(string eventName,
+			JsonObject properties = null, CancellationToken cancellationToken = default)
+		{
+			if (s_singleton == null)
+				throw new ApplicationException("The application must first construct a single Analytics object");
+
+			if (!AllowTracking)
+				return Task.CompletedTask;
+
+			return s_singleton._client.TrackAsync(
+				s_settings.IdForAnalytics,
+				eventName,
+				MergeApplicationProperties(properties),
+				cancellationToken
+			);
+		}
+
+		// Shared defaulting/merge logic behind TrackWithApplicationProperties and its async
+		// counterpart, so the two can never silently drift.
+		private static JsonObject MergeApplicationProperties(JsonObject properties)
+		{
 			if (properties == null)
 				properties = new JsonObject();
 
@@ -1047,11 +1204,7 @@ namespace DesktopAnalytics
 				properties.Add(p.Key, p.Value ?? Empty);
 			}
 
-			s_singleton._client.Track(
-				AnalyticsSettings.Default.IdForAnalytics,
-				eventName,
-				properties
-			);
+			return properties;
 		}
 
 		/// <summary>
@@ -1082,7 +1235,19 @@ namespace DesktopAnalytics
 
 		public static void FlushClient()
 		{
-			s_singleton._client?.Flush();
+			s_singleton?._client?.Flush();
+		}
+
+		/// <summary>
+		/// Async counterpart of <see cref="FlushClient"/>: attempts delivery of anything pending
+		/// without blocking a thread on the network. Bounded -- returns promptly even while
+		/// offline, leaving undelivered events queued.
+		/// </summary>
+		/// <param name="cancellationToken">Optionally ends the flush even sooner than its own
+		/// bound; undelivered events stay queued. Cancellation never faults the task.</param>
+		public static Task FlushClientAsync(CancellationToken cancellationToken = default)
+		{
+			return s_singleton?._client?.FlushAsync(cancellationToken) ?? Task.CompletedTask;
 		}
 	}
 }
