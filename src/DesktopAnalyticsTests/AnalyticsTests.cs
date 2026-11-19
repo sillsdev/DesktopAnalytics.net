@@ -87,5 +87,29 @@ namespace DesktopAnalyticsTests
 		}
 
 		#endregion
+
+		#region ApplyPiiPolicy tests
+
+		[Test]
+		public void ApplyPiiPolicy_RetainPiiTrue_ReturnsSameInstanceUnchanged()
+		{
+			var userInfo = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(userInfo, true);
+			Assert.AreSame(userInfo, result);
+			Assert.AreEqual("real@example.com", result.Email);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_RetainPiiFalse_ReturnsSanitizedCopy()
+		{
+			var userInfo = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(userInfo, false);
+			Assert.AreNotSame(userInfo, result);
+			Assert.AreEqual("@example.com", result.Email);
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		#endregion
 	}
 }

@@ -55,6 +55,7 @@ namespace DesktopAnalytics
 		private static JsonObject s_locationInfo;
 		private static JsonObject s_traits;
 		private static UserInfo s_userInfo;
+		private static bool s_retainPii;
 		private static Analytics s_singleton;
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
@@ -193,7 +194,8 @@ namespace DesktopAnalytics
 			}
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
+			s_retainPii = retainPii;
+			s_userInfo = ApplyPiiPolicy(userInfo, retainPii);
 
 			var initializationParameters = new InitializationParameters
 			{
@@ -538,13 +540,25 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
+		/// Returns userInfo unchanged if retainPii is true; otherwise returns a sanitized copy
+		/// (see <see cref="UserInfo.CreateSanitized"/>). Shared by the constructor and
+		/// <see cref="IdentifyUpdate"/> so both apply the same PII policy.
+		/// </summary>
+		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii) =>
+			retainPii ? userInfo : userInfo.CreateSanitized();
+
+		/// <summary>
 		/// Use this after showing a registration dialog, so that this stuff is sent right away,
-		/// rather than the next time you start up Analytics
+		/// rather than the next time you start up Analytics. Honors the same retainPii setting
+		/// the Analytics object was constructed with: if retainPii was false (the default), this
+		/// sanitizes userInfo the same way the constructor did, so a later call can't undo that
+		/// protection by re-sending real PII (e.g. just because some unrelated, non-PII property
+		/// like UILanguageCode changed).
 		/// </summary>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
-			s_userInfo = userInfo;
+			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii);
 			s_singleton.UpdateServerInformationOnThisUser();
 		}
 
