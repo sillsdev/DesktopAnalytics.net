@@ -58,7 +58,6 @@ namespace DesktopAnalytics
 		private static UserInfo s_userInfo;
 		private static bool s_retainPii;
 		private static Analytics s_singleton;
-		private static bool s_disposed;
 
 		/// <summary>
 		/// Exposed internally only so tests can confirm whether a call actually changed the
@@ -80,6 +79,7 @@ namespace DesktopAnalytics
 
 		private readonly IClient _client;
 		private volatile InitializationParameters _deferredInitializationParameters;
+		private bool _disposed;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -604,11 +604,14 @@ namespace DesktopAnalytics
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
-			if (userInfo == null || s_disposed)
+			if (userInfo == null)
 				return;
 
 			if (s_singleton == null)
 				throw new ApplicationException("The application must first construct a single Analytics object");
+
+			if (s_singleton._disposed)
+				return;
 
 			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
@@ -803,7 +806,7 @@ namespace DesktopAnalytics
 		public void Dispose()
 		{
 			_client?.ShutDown();
-			s_disposed = true;
+			_disposed = true;
 		}
 
 		/// <summary>
