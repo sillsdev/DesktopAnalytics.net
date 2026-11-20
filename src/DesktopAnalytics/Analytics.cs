@@ -10,6 +10,7 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
@@ -540,12 +541,43 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Returns userInfo unchanged if retainPii is true; otherwise returns a sanitized copy
-		/// (see <see cref="UserInfo.CreateSanitized"/>). Shared by the constructor and
-		/// <see cref="IdentifyUpdate"/> so both apply the same PII policy.
+		/// Matches the exact shape CreateSanitized produces for a hashed name: the original
+		/// first character, then the string form of a signed 32-bit hash code (an optional '-'
+		/// and 1-10 digits).
 		/// </summary>
-		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii) =>
-			retainPii ? userInfo : userInfo.CreateSanitized();
+		private static readonly Regex s_hashedNamePattern = new Regex(@"^.-?\d{1,10}$", RegexOptions.Compiled);
+
+		private static bool LooksAlreadyHashed(string value) =>
+			!IsNullOrEmpty(value) && s_hashedNamePattern.IsMatch(value);
+
+		/// <summary>
+		/// Returns userInfo unchanged if retainPii is true; otherwise returns a sanitized copy
+		/// (see <see cref="UserInfo.CreateSanitized"/>). If previous is given and userInfo's
+		/// FirstName/LastName are unchanged from previous's, and previous's already looks like a
+		/// hash CreateSanitized would have produced, that field is carried over as-is instead of
+		/// being hashed again - hashing an already-hashed name produces a different, drifting
+		/// value every time (unlike email sanitization, which is already idempotent), so without
+		/// this, calling IdentifyUpdate repeatedly with a previously-sanitized UserInfo (e.g. one
+		/// obtained by a caller that no longer keeps its own unsanitized copy) would keep
+		/// scrambling the name further on every call instead of leaving it stable.
+		/// Shared by the constructor and <see cref="IdentifyUpdate"/> so both apply the same
+		/// policy.
+		/// </summary>
+		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii, UserInfo previous = null)
+		{
+			if (retainPii)
+				return userInfo;
+
+			var sanitized = userInfo.CreateSanitized();
+			if (previous != null)
+			{
+				if (userInfo.FirstName == previous.FirstName && LooksAlreadyHashed(previous.FirstName))
+					sanitized.FirstName = previous.FirstName;
+				if (userInfo.LastName == previous.LastName && LooksAlreadyHashed(previous.LastName))
+					sanitized.LastName = previous.LastName;
+			}
+			return sanitized;
+		}
 
 		/// <summary>
 		/// Use this after showing a registration dialog, so that this stuff is sent right away,
@@ -553,12 +585,13 @@ namespace DesktopAnalytics
 		/// the Analytics object was constructed with: if retainPii was false (the default), this
 		/// sanitizes userInfo the same way the constructor did, so a later call can't undo that
 		/// protection by re-sending real PII (e.g. just because some unrelated, non-PII property
-		/// like UILanguageCode changed).
+		/// like UILanguageCode changed). See <see cref="ApplyPiiPolicy"/> for why an unchanged,
+		/// already-hashed name is carried over rather than re-hashed.
 		/// </summary>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
-			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii);
+			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
 		}
 

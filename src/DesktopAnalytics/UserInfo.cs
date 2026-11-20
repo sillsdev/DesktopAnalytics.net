@@ -32,7 +32,7 @@ namespace DesktopAnalytics
 				if (charactersToStrip > 0)
 					emailDomain = emailDomain.Substring(charactersToStrip);
 			}
-			return new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain, OtherProperties = OtherProperties };
+			return new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain, UILanguageCode = UILanguageCode, OtherProperties = OtherProperties };
 		}
 	}
 }

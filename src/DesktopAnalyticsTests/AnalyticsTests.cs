@@ -110,6 +110,56 @@ namespace DesktopAnalyticsTests
 			Assert.AreNotEqual("Name", result.LastName);
 		}
 
+		[Test]
+		public void ApplyPiiPolicy_NameUnchangedAndPreviousAlreadyHashed_CarriesOverPreviousHashInstead()
+		{
+			var previous = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" }.CreateSanitized();
+			var incoming = new UserInfo { Email = "real@example.com", FirstName = previous.FirstName, LastName = previous.LastName };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreEqual(previous.FirstName, result.FirstName);
+			Assert.AreEqual(previous.LastName, result.LastName);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NameChangedFromPrevious_HashesTheNewNameInstead()
+		{
+			var previous = new UserInfo { FirstName = "Real", LastName = "Name" }.CreateSanitized();
+			var incoming = new UserInfo { FirstName = "Different", LastName = "Person" };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreNotEqual(previous.FirstName, result.FirstName);
+			Assert.AreNotEqual(previous.LastName, result.LastName);
+			Assert.IsTrue(result.FirstName.StartsWith("D"));
+			Assert.IsTrue(result.LastName.StartsWith("P"));
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NameUnchangedButPreviousDoesNotLookHashed_HashesAnyway()
+		{
+			// previous.FirstName/LastName are real, unsanitized names here (as if retainPii had
+			// been true before) - even though "incoming" matches them exactly, they don't match
+			// the hash shape, so they must still be sanitized rather than carried over verbatim.
+			var previous = new UserInfo { FirstName = "Real", LastName = "Name" };
+			var incoming = new UserInfo { FirstName = "Real", LastName = "Name" };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NoPreviousGiven_HashesNormally()
+		{
+			var incoming = new UserInfo { FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(incoming, false);
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
 		#endregion
 	}
 }
