@@ -62,6 +62,14 @@ namespace DesktopAnalyticsTests
 		}
 
 		[Test]
+		public void CreateSanitized_UILanguageCodeSet_IsPreserved()
+		{
+			var orig = new UserInfo { FirstName = "Wanda", LastName = "Finkelstein", UILanguageCode = "fr" };
+			var sanitized = orig.CreateSanitized();
+			Assert.AreEqual("fr", sanitized.UILanguageCode);
+		}
+
+		[Test]
 		public void CreateSanitized_InvalidEmailAddressMissingDomain_EmailIsAtSign()
 		{
 			var orig = new UserInfo { Email = "Buck@", FirstName = "Buck", LastName = "", OtherProperties = new AttributeDictionary() };

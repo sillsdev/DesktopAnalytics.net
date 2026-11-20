@@ -10,6 +10,7 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
@@ -55,7 +56,15 @@ namespace DesktopAnalytics
 		private static JsonObject s_locationInfo;
 		private static JsonObject s_traits;
 		private static UserInfo s_userInfo;
+		private static bool s_retainPii;
 		private static Analytics s_singleton;
+
+		/// <summary>
+		/// Exposed internally only so tests can confirm whether a call actually changed the
+		/// current UserInfo (e.g. that IdentifyUpdate(null) is a true no-op), without needing to
+		/// construct a real, side-effecting Analytics singleton just to observe this.
+		/// </summary>
+		internal static UserInfo CurrentUserInfo => s_userInfo;
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
@@ -193,7 +202,8 @@ namespace DesktopAnalytics
 			}
 			_propertiesThatGoWithEveryEvent = propertiesThatGoWithEveryEvent;
 
-			s_userInfo = retainPii ? userInfo : userInfo.CreateSanitized();
+			s_retainPii = retainPii;
+			s_userInfo = ApplyPiiPolicy(userInfo, retainPii);
 
 			var initializationParameters = new InitializationParameters
 			{
@@ -538,13 +548,62 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Use this after showing a registration dialog, so that this stuff is sent right away,
-		/// rather than the next time you start up Analytics
+		/// Matches the exact shape CreateSanitized produces for a hashed name: the original
+		/// first character, then the string form of a signed 32-bit hash code (an optional '-'
+		/// and 1-10 digits).
 		/// </summary>
+		private static readonly Regex s_hashedNamePattern = new Regex(@"^.-?\d{1,10}$", RegexOptions.Compiled);
+
+		internal static bool LooksAlreadyHashed(string value) =>
+			!IsNullOrEmpty(value) && s_hashedNamePattern.IsMatch(value);
+
+		/// <summary>
+		/// Returns userInfo unchanged if retainPii is true; otherwise returns a sanitized copy
+		/// (see <see cref="UserInfo.CreateSanitized"/>). If previous is given and userInfo's
+		/// FirstName/LastName are unchanged from previous's and look like a previously-sanitized
+		/// value, we keep those fields as-is, without recomputing the hash. The computed hashes
+		/// are essentially meaningless, and there is no known harm in having them change, but
+		/// leaving them stable seems appropriate and is less likely to come as a surprise to the
+		/// caller or cause confusion for a person analyzing the data.
+		/// </summary>
+		/// <remarks>The returned UserInfo is a new object, not the same instance as userInfo or
+		/// previous.</remarks>
+		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii,
+			UserInfo previous = null)
+		{
+			if (retainPii)
+				return userInfo;
+
+			var sanitized = userInfo.CreateSanitized();
+			if (previous != null)
+			{
+				if (userInfo.FirstName == previous.FirstName && LooksAlreadyHashed(previous.FirstName))
+					sanitized.FirstName = previous.FirstName;
+				if (userInfo.LastName == previous.LastName && LooksAlreadyHashed(previous.LastName))
+					sanitized.LastName = previous.LastName;
+			}
+			return sanitized;
+		}
+
+		/// <summary>
+		/// Call this to update user information (e.g., after showing a registration dialog). This
+		/// information is sent immediately, rather than the next time you start up Analytics.
+		/// Honors the retainPii policy, so this cannot be used to inadvertently leak PII.
+		/// </summary>
+		/// <param name="userInfo">The user information to update. A null userInfo is a no-op.
+		/// </param>
+		/// <remarks>
+		/// If called after the Analytics object was constructed, this honors the same retainPii
+		/// setting used in the constructor. If called before the Analytics object was constructed,
+		/// retainPii defaults to false.
+		/// </remarks>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
-			s_userInfo = userInfo;
+			if (userInfo == null)
+				return;
+
+			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
 		}
 

@@ -87,5 +87,111 @@ namespace DesktopAnalyticsTests
 		}
 
 		#endregion
+
+		#region ApplyPiiPolicy tests
+
+		[Test]
+		public void ApplyPiiPolicy_RetainPiiTrue_ReturnsSameInstanceUnchanged()
+		{
+			var userInfo = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(userInfo, true);
+			Assert.AreSame(userInfo, result);
+			Assert.AreEqual("real@example.com", result.Email);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_RetainPiiFalse_ReturnsSanitizedCopy()
+		{
+			var userInfo = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(userInfo, false);
+			Assert.AreNotSame(userInfo, result);
+			Assert.AreEqual("@example.com", result.Email);
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NameUnchangedAndPreviousAlreadyHashed_CarriesOverPreviousHashInstead()
+		{
+			var previous = new UserInfo { Email = "real@example.com", FirstName = "Real", LastName = "Name" }.CreateSanitized();
+			var incoming = new UserInfo { Email = "real@example.com", FirstName = previous.FirstName, LastName = previous.LastName };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreEqual(previous.FirstName, result.FirstName);
+			Assert.AreEqual(previous.LastName, result.LastName);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NameChangedFromPrevious_HashesTheNewNameInstead()
+		{
+			var previous = new UserInfo { FirstName = "Real", LastName = "Name" }.CreateSanitized();
+			var incoming = new UserInfo { FirstName = "Different", LastName = "Person" };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreNotEqual(previous.FirstName, result.FirstName);
+			Assert.AreNotEqual(previous.LastName, result.LastName);
+			Assert.AreNotEqual("Different", result.FirstName);
+			Assert.AreNotEqual("Person", result.LastName);
+			Assert.IsTrue(Analytics.LooksAlreadyHashed(result.FirstName));
+			Assert.IsTrue(Analytics.LooksAlreadyHashed(result.LastName));
+			Assert.IsTrue(result.FirstName.StartsWith("D"));
+			Assert.IsTrue(result.LastName.StartsWith("P"));
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NameUnchangedButPreviousDoesNotLookHashed_HashesAnyway()
+		{
+			// previous.FirstName/LastName are real, unsanitized names here (as if retainPii had
+			// been true before) - even though "incoming" matches them exactly, they don't match
+			// the hash shape, so they must still be sanitized rather than carried over verbatim.
+			var previous = new UserInfo { FirstName = "Real", LastName = "Name" };
+			var incoming = new UserInfo { FirstName = "Real", LastName = "Name" };
+
+			var result = Analytics.ApplyPiiPolicy(incoming, false, previous);
+
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		[Test]
+		public void ApplyPiiPolicy_NoPreviousGiven_HashesNormally()
+		{
+			var incoming = new UserInfo { FirstName = "Real", LastName = "Name" };
+			var result = Analytics.ApplyPiiPolicy(incoming, false);
+			Assert.AreNotEqual("Real", result.FirstName);
+			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		[TestCase("Z", false)]
+		[TestCase("Z1", true)]
+		[TestCase("Z-1", true)]
+		[TestCase("Z2147483647", true)]
+		[TestCase("Z-2147483648", true)]
+		[TestCase("Z12345678901", false)] // 11 digits: one too many for a signed 32-bit hash
+		[TestCase("ZZ1", false)] // two leading non-digit characters
+		[TestCase("", false)]
+		[TestCase(null, false)]
+		public void LooksAlreadyHashed_VariousInputs_MatchesExpectation(string value, bool expected)
+		{
+			Assert.AreEqual(expected, Analytics.LooksAlreadyHashed(value));
+		}
+
+		#endregion
+
+		#region IdentifyUpdate tests
+
+		[Test]
+		public void IdentifyUpdate_NullUserInfo_IsNoOpAndDoesNotThrow()
+		{
+			var before = Analytics.CurrentUserInfo; // presumably null, but we don't care.
+
+			Analytics.IdentifyUpdate(null);
+
+			Assert.AreSame(before, Analytics.CurrentUserInfo);
+		}
+
+		#endregion
 	}
 }
