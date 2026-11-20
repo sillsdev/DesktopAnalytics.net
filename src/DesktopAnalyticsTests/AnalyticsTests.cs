@@ -132,6 +132,10 @@ namespace DesktopAnalyticsTests
 
 			Assert.AreNotEqual(previous.FirstName, result.FirstName);
 			Assert.AreNotEqual(previous.LastName, result.LastName);
+			Assert.AreNotEqual("Different", result.FirstName);
+			Assert.AreNotEqual("Person", result.LastName);
+			Assert.IsTrue(Analytics.LooksAlreadyHashed(result.FirstName));
+			Assert.IsTrue(Analytics.LooksAlreadyHashed(result.LastName));
 			Assert.IsTrue(result.FirstName.StartsWith("D"));
 			Assert.IsTrue(result.LastName.StartsWith("P"));
 		}
@@ -158,6 +162,30 @@ namespace DesktopAnalyticsTests
 			var result = Analytics.ApplyPiiPolicy(incoming, false);
 			Assert.AreNotEqual("Real", result.FirstName);
 			Assert.AreNotEqual("Name", result.LastName);
+		}
+
+		[TestCase("Z", false)]
+		[TestCase("Z1", true)]
+		[TestCase("Z-1", true)]
+		[TestCase("Z2147483647", true)]
+		[TestCase("Z-2147483648", true)]
+		[TestCase("Z12345678901", false)] // 11 digits: one too many for a signed 32-bit hash
+		[TestCase("ZZ1", false)] // two leading non-digit characters
+		[TestCase("", false)]
+		[TestCase(null, false)]
+		public void LooksAlreadyHashed_VariousInputs_MatchesExpectation(string value, bool expected)
+		{
+			Assert.AreEqual(expected, Analytics.LooksAlreadyHashed(value));
+		}
+
+		#endregion
+
+		#region IdentifyUpdate tests
+
+		[Test]
+		public void IdentifyUpdate_NullUserInfo_IsNoOpAndDoesNotThrow()
+		{
+			Assert.DoesNotThrow(() => Analytics.IdentifyUpdate(null));
 		}
 
 		#endregion

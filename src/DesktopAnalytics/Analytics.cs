@@ -547,7 +547,7 @@ namespace DesktopAnalytics
 		/// </summary>
 		private static readonly Regex s_hashedNamePattern = new Regex(@"^.-?\d{1,10}$", RegexOptions.Compiled);
 
-		private static bool LooksAlreadyHashed(string value) =>
+		internal static bool LooksAlreadyHashed(string value) =>
 			!IsNullOrEmpty(value) && s_hashedNamePattern.IsMatch(value);
 
 		/// <summary>
@@ -586,11 +586,14 @@ namespace DesktopAnalytics
 		/// sanitizes userInfo the same way the constructor did, so a later call can't undo that
 		/// protection by re-sending real PII (e.g. just because some unrelated, non-PII property
 		/// like UILanguageCode changed). See <see cref="ApplyPiiPolicy"/> for why an unchanged,
-		/// already-hashed name is carried over rather than re-hashed.
+		/// already-hashed name is carried over rather than re-hashed. A null userInfo is a no-op.
 		/// </summary>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
+			if (userInfo == null)
+				return;
+
 			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
 		}
