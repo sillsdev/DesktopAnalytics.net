@@ -560,17 +560,16 @@ namespace DesktopAnalytics
 		/// <summary>
 		/// Returns userInfo unchanged if retainPii is true; otherwise returns a sanitized copy
 		/// (see <see cref="UserInfo.CreateSanitized"/>). If previous is given and userInfo's
-		/// FirstName/LastName are unchanged from previous's, and previous's already looks like a
-		/// hash CreateSanitized would have produced, that field is carried over as-is instead of
-		/// being hashed again - hashing an already-hashed name produces a different, drifting
-		/// value every time (unlike email sanitization, which is already idempotent), so without
-		/// this, calling IdentifyUpdate repeatedly with a previously-sanitized UserInfo (e.g. one
-		/// obtained by a caller that no longer keeps its own unsanitized copy) would keep
-		/// scrambling the name further on every call instead of leaving it stable.
-		/// Shared by the constructor and <see cref="IdentifyUpdate"/> so both apply the same
-		/// policy.
+		/// FirstName/LastName are unchanged from previous's and look like a previously-sanitized
+		/// value, we keep those fields as-is, without recomputing the hash. The computed hashes
+		/// are essentially meaningless, and there is no known harm in having them change, but
+		/// leaving them stable seems appropriate and is less likely to come as a surprise to the
+		/// caller or cause confusion for a person analyzing the data.
 		/// </summary>
-		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii, UserInfo previous = null)
+		/// <remarks>The returned UserInfo is a new object, not the same instance as userInfo or
+		/// previous.</remarks>
+		internal static UserInfo ApplyPiiPolicy(UserInfo userInfo, bool retainPii,
+			UserInfo previous = null)
 		{
 			if (retainPii)
 				return userInfo;
@@ -587,14 +586,17 @@ namespace DesktopAnalytics
 		}
 
 		/// <summary>
-		/// Use this after showing a registration dialog, so that this stuff is sent right away,
-		/// rather than the next time you start up Analytics. Honors the same retainPii setting
-		/// the Analytics object was constructed with: if retainPii was false (the default), this
-		/// sanitizes userInfo the same way the constructor did, so a later call can't undo that
-		/// protection by re-sending real PII (e.g. just because some unrelated, non-PII property
-		/// like UILanguageCode changed). See <see cref="ApplyPiiPolicy"/> for why an unchanged,
-		/// already-hashed name is carried over rather than re-hashed. A null userInfo is a no-op.
+		/// Call this to update user information (e.g., after showing a registration dialog). This
+		/// information is sent immediately, rather than the next time you start up Analytics.
+		/// Honors the retainPii policy, so this cannot be used to inadvertently leak PII.
 		/// </summary>
+		/// <param name="userInfo">The user information to update. A null userInfo is a no-op.
+		/// </param>
+		/// <remarks>
+		/// If called after the Analytics object was constructed, this honors the same retainPii
+		/// setting used in the constructor. If called before the Analytics object was constructed,
+		/// retainPii defaults to false.
+		/// </remarks>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{

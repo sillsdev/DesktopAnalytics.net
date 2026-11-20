@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using static System.String;
 
 namespace DesktopAnalytics
 {
@@ -20,10 +21,10 @@ namespace DesktopAnalytics
 		internal UserInfo CreateSanitized()
 		{
 			var firstName = FirstName;
-			if (!String.IsNullOrWhiteSpace(firstName))
+			if (!IsNullOrWhiteSpace(firstName))
 				firstName = firstName[0].ToString() + firstName.GetHashCode();
 			var lastName = LastName;
-			if (!String.IsNullOrWhiteSpace(lastName))
+			if (!IsNullOrWhiteSpace(lastName))
 				lastName = lastName[0].ToString() + lastName.GetHashCode();
 			var emailDomain = Email;
 			if (emailDomain != null)
@@ -32,7 +33,8 @@ namespace DesktopAnalytics
 				if (charactersToStrip > 0)
 					emailDomain = emailDomain.Substring(charactersToStrip);
 			}
-			return new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain, UILanguageCode = UILanguageCode, OtherProperties = OtherProperties };
+			return new UserInfo { FirstName = firstName, LastName = lastName, Email = emailDomain,
+				UILanguageCode = UILanguageCode, OtherProperties = OtherProperties };
 		}
 	}
 }

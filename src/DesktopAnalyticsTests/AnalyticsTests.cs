@@ -185,15 +185,9 @@ namespace DesktopAnalyticsTests
 		[Test]
 		public void IdentifyUpdate_NullUserInfo_IsNoOpAndDoesNotThrow()
 		{
-			// No Analytics object is constructed anywhere in this test run, so s_singleton is
-			// still null; if IdentifyUpdate didn't return early for a null userInfo, it would
-			// reach s_singleton.UpdateServerInformationOnThisUser() and NRE there regardless of
-			// userInfo. DoesNotThrow is therefore proof it never got past the guard - but that
-			// alone doesn't prove nothing was mutated before any such later failure would occur,
-			// so also assert CurrentUserInfo (s_userInfo) is untouched.
-			var before = Analytics.CurrentUserInfo;
+			var before = Analytics.CurrentUserInfo; // presumably null, but we don't care.
 
-			Assert.DoesNotThrow(() => Analytics.IdentifyUpdate(null));
+			Analytics.IdentifyUpdate(null);
 
 			Assert.AreSame(before, Analytics.CurrentUserInfo);
 		}
