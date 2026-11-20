@@ -1,4 +1,4 @@
-name: Publish To Nuget.org on pushed version tag
+name: Publish To Nuget.org on push to master or version tag
 on:
   push:
     branches:
