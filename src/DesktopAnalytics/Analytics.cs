@@ -79,6 +79,7 @@ namespace DesktopAnalytics
 
 		private readonly IClient _client;
 		private volatile InitializationParameters _deferredInitializationParameters;
+		private bool _disposed;
 
 		/// <summary>
 		/// Initialized a singleton; after calling this, use Analytics.Track() for each event.
@@ -593,18 +594,29 @@ namespace DesktopAnalytics
 		/// <param name="userInfo">The user information to update. A null userInfo is a no-op.
 		/// </param>
 		/// <remarks>
-		/// If called after the Analytics object was constructed, this honors the same retainPii
-		/// setting used in the constructor. If called before the Analytics object was constructed,
-		/// retainPii defaults to false.
+		/// Must be called after the Analytics object has been constructed (that's where the
+		/// retainPii policy this honors comes from). A no-op if the Analytics object has already
+		/// been disposed - by that point in the app's lifecycle, updating the user can't
+		/// meaningfully work, and failing silently is safer than risking a crash during shutdown.
 		/// </remarks>
+		/// <exception cref="ApplicationException">Thrown if called before the Analytics object
+		/// has been constructed.</exception>
 		[PublicAPI]
 		public static void IdentifyUpdate(UserInfo userInfo)
 		{
 			if (userInfo == null)
 				return;
 
+			if (s_singleton == null)
+				throw new ApplicationException("The application must first construct a single Analytics object");
+
+			if (s_singleton._disposed)
+				return;
+
 			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
+			if (AllowTracking)
+				FlushClient();
 		}
 
 		/// <summary>
@@ -795,6 +807,7 @@ namespace DesktopAnalytics
 		public void Dispose()
 		{
 			_client?.ShutDown();
+			_disposed = true;
 		}
 
 		/// <summary>

@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Xml.Linq;
 using DesktopAnalytics;
@@ -190,6 +191,13 @@ namespace DesktopAnalyticsTests
 			Analytics.IdentifyUpdate(null);
 
 			Assert.AreSame(before, Analytics.CurrentUserInfo);
+		}
+
+		[Test]
+		public void IdentifyUpdate_SingletonNotYetConstructed_NonNullUserInfo_Throws()
+		{
+			// No Analytics object is ever constructed in this test run, so s_singleton is null.
+			Assert.Throws<ApplicationException>(() => Analytics.IdentifyUpdate(new UserInfo()));
 		}
 
 		#endregion
