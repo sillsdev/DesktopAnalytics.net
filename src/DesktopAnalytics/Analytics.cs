@@ -58,6 +58,13 @@ namespace DesktopAnalytics
 		private static UserInfo s_userInfo;
 		private static bool s_retainPii;
 		private static Analytics s_singleton;
+
+		/// <summary>
+		/// Exposed internally only so tests can confirm whether a call actually changed the
+		/// current UserInfo (e.g. that IdentifyUpdate(null) is a true no-op), without needing to
+		/// construct a real, side-effecting Analytics singleton just to observe this.
+		/// </summary>
+		internal static UserInfo CurrentUserInfo => s_userInfo;
 		private readonly Dictionary<string, string> _propertiesThatGoWithEveryEvent;
 		private static int s_exceptionCount = 0;
 
