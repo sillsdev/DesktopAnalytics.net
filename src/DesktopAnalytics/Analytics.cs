@@ -615,7 +615,8 @@ namespace DesktopAnalytics
 
 			s_userInfo = ApplyPiiPolicy(userInfo, s_retainPii, s_userInfo);
 			s_singleton.UpdateServerInformationOnThisUser();
-			FlushClient();
+			if (AllowTracking)
+				FlushClient();
 		}
 
 		/// <summary>
